@@ -4,9 +4,9 @@ from pathlib import Path
 from datetime import date, datetime
 import pandas as pd
 import streamlit as st
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse, parse_qs
 
-DB = Path("house_of_wax_v8.db")
+DB = Path("house_of_wax_v9.db")
 MEDIA_DIR = Path("house_of_wax_media")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
 
@@ -20,6 +20,7 @@ def q(sql, params=()):
     c.execute(sql, params)
     c.commit()
     c.close()
+    ensure_internet_media_schema()
 
 
 def table(name):
@@ -28,6 +29,18 @@ def table(name):
     c.close()
     return df
 
+
+def ensure_internet_media_schema():
+    c = conn()
+    cur = c.cursor()
+    try:
+        cols = [row[1] for row in cur.execute("PRAGMA table_info(internet_media_links)").fetchall()]
+        if "thumbnail_url" not in cols:
+            cur.execute("ALTER TABLE internet_media_links ADD COLUMN thumbnail_url TEXT")
+            c.commit()
+    except Exception:
+        pass
+    c.close()
 
 def setup():
     MEDIA_DIR.mkdir(exist_ok=True)
@@ -87,6 +100,7 @@ def setup():
         url TEXT NOT NULL,
         public_visible TEXT DEFAULT 'Yes',
         notes TEXT,
+        thumbnail_url TEXT,
         saved_at TEXT
     )
     """)
@@ -268,6 +282,74 @@ def save_inventory(row):
 
 
 
+def extract_youtube_id(url):
+    try:
+        parsed = urlparse(str(url))
+        host = parsed.netloc.lower()
+        if "youtu.be" in host:
+            return parsed.path.strip("/")
+        if "youtube.com" in host:
+            if parsed.path == "/watch":
+                return parse_qs(parsed.query).get("v", [None])[0]
+            if parsed.path.startswith("/shorts/"):
+                return parsed.path.split("/shorts/")[-1].split("/")[0]
+            if parsed.path.startswith("/embed/"):
+                return parsed.path.split("/embed/")[-1].split("/")[0]
+    except Exception:
+        return None
+    return None
+
+def infer_thumbnail_url(media_type, source, url, saved_thumb=""):
+    saved_thumb = str(saved_thumb or "").strip()
+    if saved_thumb:
+        return saved_thumb
+    url = str(url or "").strip()
+    media_type = str(media_type or "")
+    source = str(source or "")
+    lower = url.lower()
+    if media_type == "Picture":
+        if any(lower.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]):
+            return url
+    if media_type == "Video":
+        yt_id = extract_youtube_id(url)
+        if yt_id:
+            return f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg"
+    return ""
+
+def render_internet_media_card(link):
+    label = str(link.get("title", "") or link.get("url", "Media link"))
+    media_type = str(link.get("media_type", "") or "Media")
+    source = str(link.get("source", "") or "Internet")
+    notes = str(link.get("notes", "") or "")
+    url = str(link.get("url", "") or "")
+    thumb = infer_thumbnail_url(media_type, source, url, link.get("thumbnail_url", ""))
+
+    with st.container(border=True):
+        st.markdown(f"**{media_type} — {source}**")
+        if media_type == "Picture":
+            if thumb:
+                st.image(thumb, caption=label, use_container_width=True)
+            st.link_button(f"Open {label}", url)
+        elif media_type == "Video":
+            yt_id = extract_youtube_id(url)
+            if yt_id:
+                st.image(f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg", caption=label, use_container_width=True)
+            elif thumb:
+                st.image(thumb, caption=label, use_container_width=True)
+            elif url.lower().endswith((".mp4", ".mov", ".m4v", ".webm")):
+                st.video(url)
+            st.link_button(f"Watch {label}", url)
+        elif media_type == "Audio":
+            if url.lower().endswith((".mp3", ".wav", ".m4a", ".aac", ".ogg")):
+                st.audio(url)
+            st.link_button(f"Listen to {label}", url)
+        else:
+            if thumb:
+                st.image(thumb, caption=label, use_container_width=True)
+            st.link_button(f"Open {label}", url)
+        if notes:
+            st.caption(notes)
+
 def build_media_search_links(artist, title, label="", year=""):
     base_query = " ".join([str(artist or ""), str(title or ""), str(label or ""), str(year or ""), "vinyl record"]).strip()
     qv = quote_plus(base_query)
@@ -284,13 +366,13 @@ def build_media_search_links(artist, title, label="", year=""):
         "General Web Search": f"https://www.google.com/search?q={qv}",
     }
 
-def save_internet_media_link(sku, source, media_type, title, url, public_visible="Yes", notes=""):
+def save_internet_media_link(sku, source, media_type, title, url, public_visible="Yes", notes="", thumbnail_url=""):
     q("""
     INSERT INTO internet_media_links
-    (sku, source, media_type, title, url, public_visible, notes, saved_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    (sku, source, media_type, title, url, public_visible, notes, thumbnail_url, saved_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        sku, source, media_type, title, url, public_visible, notes,
+        sku, source, media_type, title, url, public_visible, notes, thumbnail_url,
         datetime.now().isoformat(timespec="seconds")
     ))
 
@@ -317,14 +399,10 @@ def delete_internet_media_link(link_id):
 def render_internet_media_links(link_df):
     if link_df.empty:
         return
-    for _, link in link_df.iterrows():
-        label = str(link.get("title", "") or link.get("url", "Media link"))
-        media_type = str(link.get("media_type", "") or "Media")
-        source = str(link.get("source", "") or "Internet")
-        notes = str(link.get("notes", "") or "")
-        st.markdown(f"**{media_type} — {source}:** [{label}]({link['url']})")
-        if notes:
-            st.caption(notes)
+    cols = st.columns(2)
+    for idx, (_, link) in enumerate(link_df.iterrows()):
+        with cols[idx % 2]:
+            render_internet_media_card(link)
 
 
 def save_media_file(sku, uploaded_file, media_type, public_visible="Yes", caption_text=""):
@@ -614,7 +692,7 @@ else:
 
     with tabs[5]:
         st.subheader("Internet Media Finder")
-        st.write("Search trusted places for photos, audio, and video related to a record. Save useful links to the listing instead of downloading copyrighted files automatically.")
+        st.write("Search trusted places for photos, audio, and video related to a record. Save useful links to the listing and add thumbnail previews so shoppers can see images and videos without extra clicks.")
 
         inv = table("inventory")
         if inv.empty:
@@ -652,12 +730,13 @@ else:
             media_url = st.text_input("Paste media/page URL")
             public_visible = st.selectbox("Show this link on Public Storefront?", ["Yes", "No"], key="internet_public_visible")
             notes = st.text_area("Notes / usage rights / source details")
+            thumbnail_url = st.text_input("Optional thumbnail URL (useful for image/video preview)")
 
             if st.button("Save Internet Media Link"):
                 if not media_url.strip():
                     st.error("Paste a URL first.")
                 else:
-                    save_internet_media_link(sku, source, media_type, link_title, media_url.strip(), public_visible, notes)
+                    save_internet_media_link(sku, source, media_type, link_title, media_url.strip(), public_visible, notes, thumbnail_url.strip())
                     st.success("Saved internet media link to this record.")
 
             st.write("### Saved Internet Media Links")
@@ -665,7 +744,7 @@ else:
             if saved_links.empty:
                 st.info("No internet media links saved for this record yet.")
             else:
-                st.dataframe(saved_links[["id", "source", "media_type", "title", "url", "public_visible", "saved_at"]], use_container_width=True)
+                st.dataframe(saved_links[["id", "source", "media_type", "title", "url", "thumbnail_url", "public_visible", "saved_at"]], use_container_width=True)
                 render_internet_media_links(saved_links)
 
                 delete_link = st.selectbox("Delete internet media link ID", [str(x) for x in saved_links["id"].tolist()])

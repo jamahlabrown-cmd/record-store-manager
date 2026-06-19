@@ -39,3 +39,13 @@ For the public storefront, the safest options are:
 - official Bandcamp/SoundCloud links
 - Discogs reference links
 - label/artist official website links
+
+
+## Thumbnail previews
+
+House Of Wax V9 adds thumbnail-style previews for saved internet media links.
+
+- Picture links can display the image directly when the URL is a direct image link.
+- YouTube links automatically show a video thumbnail.
+- Other video/image links can use an optional `thumbnail_url` so the storefront shows a preview image.
+- Audio links still show a direct open/listen button, and direct audio files can be previewed in the app.
