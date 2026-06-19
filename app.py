@@ -7,7 +7,7 @@ import streamlit as st
 
 DB = Path("house_of_wax_v7.db")
 MEDIA_DIR = Path("house_of_wax_media")
-ADMIN_PASSWORD = st.secrets.get("Voodoo#71")
+ADMIN_PASSWORD = "Voodoo#71"
 
 
 def conn():
