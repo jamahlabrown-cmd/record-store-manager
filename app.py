@@ -5,11 +5,14 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-DB = Path("house_of_wax_v6.db")
-ADMIN_PASSWORD = "changeme123"
+DB = Path("house_of_wax_v7.db")
+MEDIA_DIR = Path("house_of_wax_media")
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
+
 
 def conn():
     return sqlite3.connect(DB)
+
 
 def q(sql, params=()):
     c = conn()
@@ -17,13 +20,16 @@ def q(sql, params=()):
     c.commit()
     c.close()
 
+
 def table(name):
     c = conn()
     df = pd.read_sql_query(f"SELECT * FROM {name}", c)
     c.close()
     return df
 
+
 def setup():
+    MEDIA_DIR.mkdir(exist_ok=True)
     c = conn()
     cur = c.cursor()
     cur.execute("""
@@ -55,6 +61,18 @@ def setup():
         listing_fee REAL DEFAULT 0,
         listing_status TEXT DEFAULT 'Active',
         updated_at TEXT
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS media_assets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sku TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        public_visible TEXT DEFAULT 'Yes',
+        caption TEXT,
+        uploaded_at TEXT
     )
     """)
     cur.execute("""
@@ -114,21 +132,25 @@ def setup():
     c.commit()
     c.close()
 
+
 def money(x):
     try:
         return f"${float(x):,.2f}"
     except Exception:
         return "$0.00"
 
+
 def s(v):
     if pd.isna(v):
         return ""
     return str(v).strip()
 
+
 def sku_for(artist, title, barcode=""):
     if barcode:
         return "BC-" + barcode[-8:]
     return (artist[:3] + "-" + title[:5] + "-" + str(int(datetime.now().timestamp()))[-5:]).upper().replace(" ", "")
+
 
 def bio(row):
     artist, title, genre, fmt = s(row.get("artist","")), s(row.get("title","")), s(row.get("genre","")), s(row.get("format","Vinyl"))
@@ -140,6 +162,7 @@ def bio(row):
     if condition:
         text += f" This copy is listed in {condition} condition."
     return text + " A strong pickup for collectors, DJs, and music lovers."
+
 
 def caption(row):
     artist, title, genre = s(row.get("artist","")), s(row.get("title","")), s(row.get("genre",""))
@@ -154,15 +177,17 @@ def caption(row):
         pass
     return txt + " Message us or stop by before it is gone."
 
+
 def tags(row):
     genre = s(row.get("genre","")).replace(" ","")
     artist = s(row.get("artist","")).replace(" ","")
-    out = ["#RecordStore", "#VinylCommunity", "#NowSpinning", "#CrateDigging"]
+    out = ["#HouseOfWax", "#RecordStore", "#VinylCommunity", "#NowSpinning", "#CrateDigging"]
     if genre:
         out.append("#" + genre)
     if artist and len(artist) < 25:
         out.append("#" + artist)
     return " ".join(out)
+
 
 def save_inventory(row):
     row = {str(k).lower().strip(): v for k, v in row.items()}
@@ -225,13 +250,74 @@ def save_inventory(row):
     c.commit()
     c.close()
 
+
+def save_media_file(sku, uploaded_file, media_type, public_visible="Yes", caption_text=""):
+    MEDIA_DIR.mkdir(exist_ok=True)
+    safe_sku = "".join([ch for ch in str(sku) if ch.isalnum() or ch in ("-", "_")]) or "unknown"
+    ext = Path(uploaded_file.name).suffix.lower()
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    safe_name = f"{safe_sku}_{media_type}_{stamp}{ext}"
+    path = MEDIA_DIR / safe_name
+    path.write_bytes(uploaded_file.getbuffer())
+    q("""
+    INSERT INTO media_assets
+    (sku, media_type, file_name, file_path, public_visible, caption, uploaded_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (sku, media_type, uploaded_file.name, str(path), public_visible, caption_text, datetime.now().isoformat(timespec="seconds")))
+
+
+def get_media_for_sku(sku, public_only=False):
+    c = conn()
+    if public_only:
+        df = pd.read_sql_query("SELECT * FROM media_assets WHERE sku = ? AND public_visible = 'Yes' ORDER BY uploaded_at DESC", c, params=(sku,))
+    else:
+        df = pd.read_sql_query("SELECT * FROM media_assets WHERE sku = ? ORDER BY uploaded_at DESC", c, params=(sku,))
+    c.close()
+    return df
+
+
+def render_media_assets(media_df):
+    if media_df.empty:
+        return
+    for _, m in media_df.iterrows():
+        path = str(m.get("file_path", ""))
+        cap = str(m.get("caption", "") or "")
+        if not Path(path).exists():
+            st.warning(f"Media file missing: {m.get('file_name', '')}")
+            continue
+        if m["media_type"] == "Picture":
+            st.image(path, caption=cap or m.get("file_name", ""), use_container_width=True)
+        elif m["media_type"] == "Audio":
+            if cap:
+                st.caption(cap)
+            st.audio(path)
+        elif m["media_type"] == "Video":
+            if cap:
+                st.caption(cap)
+            st.video(path)
+
+
+def delete_media_asset(media_id):
+    assets = table("media_assets")
+    row = assets[assets["id"] == int(media_id)] if not assets.empty else assets
+    if not row.empty:
+        file_path = Path(str(row.iloc[0]["file_path"]))
+        if file_path.exists():
+            try:
+                file_path.unlink()
+            except Exception:
+                pass
+    q("DELETE FROM media_assets WHERE id = ?", (int(media_id),))
+
+
 setup()
 st.set_page_config(page_title="House Of Wax", layout="wide")
 st.sidebar.title("House Of Wax")
-mode = st.sidebar.radio("Choose view", ["Public Storefront", "House Of Wax Seller Storefronts", "Admin Login"])
+mode = st.sidebar.radio("Choose view", ["Public Storefront", "Seller Storefronts", "Admin Login"])
 
 if mode == "Public Storefront":
-    st.title("House Of Wax Public Storefront")
+    st.title("House Of Wax")
+    st.caption("Browse records, view media, and request a hold.")
     inv = table("inventory")
     if inv.empty:
         st.info("No public inventory yet.")
@@ -243,11 +329,15 @@ if mode == "Public Storefront":
         for _, r in public.iterrows():
             with st.container(border=True):
                 st.subheader(f"{r.artist} — {r.title}")
-                st.caption("Store inventory" if r.owner_type == "Store" else f"House Of Wax seller #{int(r.seller_id)}")
+                st.caption("House Of Wax inventory" if r.owner_type == "Store" else f"House Of Wax seller #{int(r.seller_id)}")
                 st.write(f"{r.format} | {r.genre} | {r.condition} | {r.release_year}")
                 st.write(r.bio)
                 st.write(f"**Price:** {money(r.price)}")
                 st.write(f"**Available:** {int(r.quantity)}")
+                media = get_media_for_sku(r.sku, public_only=True)
+                if not media.empty:
+                    with st.expander("View photos, audio, and video"):
+                        render_media_assets(media)
                 with st.expander("Request hold"):
                     with st.form(f"hold_{r.sku}"):
                         name = st.text_input("Name")
@@ -265,7 +355,7 @@ if mode == "Public Storefront":
                                 st.success("Request sent.")
     st.warning("Public view hides costs, expenses, sales reports, customers, and admin tools.")
 
-elif mode == "House Of Wax Seller Storefronts":
+elif mode == "Seller Storefronts":
     st.title("House Of Wax Seller Storefronts")
     sellers = table("sellers")
     inv = table("inventory")
@@ -276,52 +366,65 @@ elif mode == "House Of Wax Seller Storefronts":
         choice = st.selectbox("Choose seller", [f"{r.id} | {r.store_name}" for _, r in approved.iterrows()])
         seller_id = int(choice.split("|")[0].strip())
         st.header(approved[approved.id == seller_id].iloc[0].store_name)
-        items = inv[(inv.owner_type == "House Of Wax Seller") & (inv.seller_id == seller_id) & (inv.quantity > 0)]
+        items = inv[(inv.owner_type == "Marketplace Seller") & (inv.seller_id == seller_id) & (inv.quantity > 0)]
         if items.empty:
             st.info("This seller has no active listings.")
         else:
-            st.dataframe(items[["sku","barcode","artist","title","format","genre","condition","price","quantity","bio"]], use_container_width=True)
+            for _, r in items.iterrows():
+                with st.container(border=True):
+                    st.subheader(f"{r.artist} — {r.title}")
+                    st.write(f"{r.format} | {r.genre} | {r.condition}")
+                    st.write(f"**Price:** {money(r.price)}")
+                    media = get_media_for_sku(r.sku, public_only=True)
+                    if not media.empty:
+                        with st.expander("View media"):
+                            render_media_assets(media)
 
 else:
     if "auth" not in st.session_state:
         st.session_state.auth = False
     if not st.session_state.auth:
-        st.title("Admin Login")
+        st.title("House Of Wax Admin Login")
         pw = st.text_input("Password", type="password")
         if st.button("Login"):
-            if pw == ADMIN_PASSWORD:
+            if ADMIN_PASSWORD and pw == ADMIN_PASSWORD:
                 st.session_state.auth = True
                 st.rerun()
             else:
-                st.error("Wrong password.")
-        st.info("Default password: changeme123. Change it in app.py before sharing.")
+                st.error("Wrong password or admin password not set in Streamlit Secrets.")
+        if not ADMIN_PASSWORD:
+            st.error("Admin password is not set yet. Add ADMIN_PASSWORD in Streamlit Secrets before using Admin Login.")
+        else:
+            st.info("Admin password is set securely in Streamlit Secrets.")
         st.stop()
 
     if st.sidebar.button("Logout"):
         st.session_state.auth = False
         st.rerun()
 
-    tabs = st.tabs(["Dashboard", "Barcode Scanner", "Inventory", "Upload CSV", "Sellers", "Seller Listings", "House Of Wax Orders", "Expenses", "Hold Requests", "Cleanup", "Reports"])
+    tabs = st.tabs(["Dashboard", "Barcode Scanner", "Inventory", "Upload CSV", "Media Manager", "Sellers", "Seller Listings", "Marketplace Orders", "Expenses", "Hold Requests", "Cleanup", "Reports"])
 
     with tabs[0]:
+        st.subheader("Dashboard")
         inv = table("inventory")
         sellers = table("sellers")
         orders = table("orders")
         expenses = table("expenses")
-        c1,c2,c3,c4,c5 = st.columns(5)
+        media = table("media_assets")
+        c1,c2,c3,c4,c5,c6 = st.columns(6)
         c1.metric("Units", int(inv.quantity.sum()) if not inv.empty else 0)
         c2.metric("Retail Value", money((inv.price * inv.quantity).sum()) if not inv.empty else "$0.00")
         c3.metric("Cost Value", money((inv.cost * inv.quantity).sum()) if not inv.empty else "$0.00")
         c4.metric("Sellers", len(sellers))
-        c5.metric("House Of Wax Orders", len(orders))
+        c5.metric("Orders", len(orders))
+        c6.metric("Media Files", len(media))
         if not inv.empty:
             st.subheader("Low Stock")
             st.dataframe(inv[inv.quantity <= inv.reorder_level][["sku","barcode","artist","title","quantity","reorder_level","location"]], use_container_width=True)
 
     with tabs[1]:
         st.subheader("Barcode Scanner / Barcode Entry")
-        st.write("Use a USB or Bluetooth scanner. Click the box, scan the barcode, and the number should appear automatically.")
-        st.info("Phone-camera barcode decoding is a future add-on. This version supports hardware scanners and barcode lookup.")
+        st.write("Use QRbot, a USB scanner, or a Bluetooth scanner. Paste or scan the barcode below.")
         barcode = st.text_input("Scan or type barcode")
         inv = table("inventory")
         if barcode:
@@ -389,6 +492,46 @@ else:
                     st.success(f"Imported {len(df)} rows.")
 
     with tabs[4]:
+        st.subheader("Media Manager")
+        st.write("Attach pictures, audio clips, and videos to records. Public media appears on the customer storefront; private media stays admin-only.")
+        inv = table("inventory")
+        if inv.empty:
+            st.info("Add inventory first, then upload media.")
+        else:
+            item_choice = st.selectbox("Choose record for media", [f"{r.sku} | {r.artist} - {r.title}" for _, r in inv.iterrows()])
+            sku = item_choice.split("|")[0].strip()
+            record = inv[inv.sku == sku].iloc[0]
+            st.write(f"### {record.artist} — {record.title}")
+            st.caption(f"SKU: {sku}")
+            media_type = st.selectbox("Media Type", ["Picture", "Audio", "Video"])
+            public_visible = st.selectbox("Show media on Public Storefront?", ["Yes", "No"])
+            caption_text = st.text_input("Media Caption / Notes")
+            if media_type == "Picture":
+                files = st.file_uploader("Upload pictures", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
+            elif media_type == "Audio":
+                files = st.file_uploader("Upload audio clips", type=["mp3", "wav", "m4a", "aac", "ogg"], accept_multiple_files=True)
+            else:
+                files = st.file_uploader("Upload videos", type=["mp4", "mov", "m4v", "webm"], accept_multiple_files=True)
+            if st.button("Save Media"):
+                if not files:
+                    st.error("Choose at least one file first.")
+                else:
+                    for uploaded in files:
+                        save_media_file(sku, uploaded, media_type, public_visible, caption_text)
+                    st.success(f"Saved {len(files)} media file(s) to {record.artist} — {record.title}.")
+            st.write("### Existing Media For This Record")
+            current_media = get_media_for_sku(sku, public_only=False)
+            if current_media.empty:
+                st.info("No media uploaded for this record yet.")
+            else:
+                st.dataframe(current_media[["id", "media_type", "file_name", "public_visible", "caption", "uploaded_at"]], use_container_width=True)
+                render_media_assets(current_media)
+                delete_choice = st.selectbox("Delete media asset ID", [str(x) for x in current_media["id"].tolist()])
+                if st.button("Delete Selected Media"):
+                    delete_media_asset(delete_choice)
+                    st.success("Media deleted. Refresh or change tabs to update.")
+
+    with tabs[5]:
         st.subheader("House Of Wax Sellers / Sub-Stores")
         with st.form("seller"):
             c1,c2 = st.columns(2)
@@ -409,7 +552,7 @@ else:
                 st.success("Seller saved.")
         st.dataframe(table("sellers"), use_container_width=True)
 
-    with tabs[5]:
+    with tabs[6]:
         st.subheader("Create Seller Listing")
         sellers = table("sellers")
         approved = sellers[sellers.status == "Approved"] if not sellers.empty else sellers
@@ -436,16 +579,16 @@ else:
                 quantity = c10.number_input("Quantity", min_value=1, value=1)
                 listing_fee = st.number_input("Listing fee charged", min_value=0.0, value=0.0)
                 if st.form_submit_button("Create Listing"):
-                    save_inventory({"sku":sku,"barcode":barcode,"artist":artist,"title":title,"format":fmt,"genre":genre,"condition":condition,"cost":cost,"price":price,"quantity":quantity,"public_visible":"Yes","owner_type":"House Of Wax Seller","seller_id":seller_id,"commission_rate":seller.commission_rate,"listing_fee":listing_fee})
+                    save_inventory({"sku":sku,"barcode":barcode,"artist":artist,"title":title,"format":fmt,"genre":genre,"condition":condition,"cost":cost,"price":price,"quantity":quantity,"public_visible":"Yes","owner_type":"Marketplace Seller","seller_id":seller_id,"commission_rate":seller.commission_rate,"listing_fee":listing_fee})
                     st.success("Seller listing created.")
         inv = table("inventory")
         if not inv.empty:
-            st.dataframe(inv[inv.owner_type == "House Of Wax Seller"], use_container_width=True)
+            st.dataframe(inv[inv.owner_type == "Marketplace Seller"], use_container_width=True)
 
-    with tabs[6]:
-        st.subheader("House Of Wax Orders / Payouts")
+    with tabs[7]:
+        st.subheader("Marketplace Orders / Payouts")
         inv = table("inventory")
-        active = inv[(inv.owner_type == "House Of Wax Seller") & (inv.quantity > 0)] if not inv.empty else inv
+        active = inv[(inv.owner_type == "Marketplace Seller") & (inv.quantity > 0)] if not inv.empty else inv
         if active.empty:
             st.info("No active seller listings.")
         else:
@@ -467,11 +610,8 @@ else:
                     st.success(f"Sale recorded. Platform fee: {money(fee)}. Seller payout: {money(payout)}.")
         orders = table("orders")
         st.dataframe(orders, use_container_width=True)
-        if not orders.empty:
-            st.subheader("Payout Summary")
-            st.dataframe(orders.groupby("seller_id", as_index=False)[["sale_price","platform_fee","seller_payout"]].sum(), use_container_width=True)
 
-    with tabs[7]:
+    with tabs[8]:
         st.subheader("Expenses")
         with st.form("expense"):
             c1,c2,c3 = st.columns(3)
@@ -486,11 +626,11 @@ else:
                 st.success("Expense added.")
         st.dataframe(table("expenses"), use_container_width=True)
 
-    with tabs[8]:
+    with tabs[9]:
         st.subheader("Hold Requests")
         st.dataframe(table("hold_requests"), use_container_width=True)
 
-    with tabs[9]:
+    with tabs[10]:
         st.subheader("Cleanup")
         if st.button("Delete sample inventory"):
             for sku in ["VIN-0001","VIN-0002","VIN-0003","CD-0001","MER-0001"]:
@@ -499,15 +639,15 @@ else:
         confirm = st.text_input("Type DELETE ALL to wipe all app data")
         if st.button("Reset entire app"):
             if confirm == "DELETE ALL":
-                for t in ["inventory","sellers","orders","expenses","hold_requests"]:
+                for t in ["inventory","media_assets","sellers","orders","expenses","hold_requests"]:
                     q(f"DELETE FROM {t}")
                 st.success("App reset.")
             else:
                 st.error("Type DELETE ALL exactly.")
 
-    with tabs[10]:
+    with tabs[11]:
         st.subheader("Reports")
-        report = st.selectbox("Report", ["inventory","sellers","orders","expenses","hold_requests"])
+        report = st.selectbox("Report", ["inventory","media_assets","sellers","orders","expenses","hold_requests"])
         df = table(report)
         st.dataframe(df, use_container_width=True)
         if not df.empty:

@@ -1,12 +1,11 @@
+# Quick Start V7
 
-# Quick Start V5
-
-1. Upload the V5 files to GitHub.
-2. Redeploy Streamlit.
-3. Open Admin Login.
-4. Password: changeme123
-5. Test Barcode Scanner.
-6. Add a seller in Sellers.
-7. Mark seller Approved.
-8. Create a seller listing.
-9. Open Seller Storefronts public view.
+1. Upload V7 files to GitHub.
+2. Reboot/Redeploy Streamlit.
+3. Set ADMIN_PASSWORD in Streamlit Secrets.
+4. Log into Admin.
+5. Add/upload inventory.
+6. Go to Media Manager.
+7. Upload a picture/audio/video for a record.
+8. Mark it Public.
+9. Check the Public Storefront.

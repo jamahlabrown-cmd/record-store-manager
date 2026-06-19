@@ -1,133 +1,42 @@
+# House Of Wax V7 Media
 
-# House Of Wax
+This version adds a Media Manager to House Of Wax.
 
-V5 adds two major foundations:
+## New media features
 
-1. Barcode scanner / barcode lookup
-2. House Of Wax Marketplace seller storefronts similar to an early Discogs-style platform
+Attach media to each record by SKU:
 
-## Barcode Scanner
+- Pictures: JPG, JPEG, PNG, WEBP
+- Audio: MP3, WAV, M4A, AAC, OGG
+- Video: MP4, MOV, M4V, WEBM
 
-This version supports USB and Bluetooth barcode scanners.
+Each file can be public or private.
 
-Most barcode scanners act like a keyboard. Use it like this:
+Public media appears on the Public Storefront under the record.
+Private media stays inside Admin.
 
-1. Open Admin Login.
-2. Go to Barcode Scanner.
-3. Click inside the barcode field.
-4. Scan the record barcode.
-5. The barcode number appears automatically.
-6. If it exists, the app shows the record.
-7. If it does not exist, the app lets you add the record.
+## How to use
 
-## Phone Camera Scanner
+1. Log into Admin.
+2. Go to Media Manager.
+3. Choose a record.
+4. Pick Picture, Audio, or Video.
+5. Upload one or more files.
+6. Choose whether the media is public.
+7. Click Save Media.
 
-This version does not yet decode barcodes from the phone camera.
+## Admin password
 
-That should be a future upgrade using:
-- a custom Streamlit camera barcode component,
-- a separate mobile scanner app,
-- or Discogs/API lookup after barcode entry.
+This secure version uses Streamlit Secrets:
 
-## House Of Wax Marketplace / Sub-Stores
+```toml
+ADMIN_PASSWORD = "your-private-password"
+```
 
-This version adds:
+Go to Streamlit > Manage app > Settings > Secrets to set it.
 
-- Seller profiles
-- Seller approval
-- Seller storefronts
-- Seller listings
-- Commission percentage
-- Listing fee tracking
-- House Of Wax Marketplace order recording
-- Platform fee calculation
-- Seller payout calculation
-- Public seller storefront preview
+## Important media storage note
 
-## Still needed for a real Discogs-style marketplace
+This version stores uploaded media in the Streamlit app file system. That is okay for testing but may reset later on Streamlit Cloud.
 
-- Seller login
-- Buyer checkout
-- Stripe or PayPal payments
-- Shipping labels
-- Tax settings
-- Seller payout automation
-- Seller terms and agreements
-- Product grading rules
-- Cloud database such as Supabase or PostgreSQL
-
-## Admin Password
-
-Default:
-
-changeme123
-
-Change this in app.py before sharing publicly:
-
-ADMIN_PASSWORD = "changeme123"
-
-## Deploy
-
-Upload these files to GitHub:
-
-- app.py
-- requirements.txt
-- README.md
-- QUICK_START.md
-- sample_inventory_house_of_wax.csv
-
-Then redeploy/reboot Streamlit.
-
-
-# House Of Wax Improvement Roadmap
-
-Based on similar tools like Discogs, Square for Retail, Shopify POS, and barcode inventory apps, the strongest next upgrades are:
-
-## 1. Discogs-style barcode lookup
-The current app can store and search barcodes. The next major step is connecting a music database/API so scanning a barcode can automatically pull:
-- artist
-- album title
-- label
-- release year
-- format
-- genre
-- pressing/version notes
-- market value estimate
-
-## 2. True phone-camera barcode scanner
-Right now the app works best with a USB/Bluetooth scanner or QRbot copy/paste. A future upgrade should add in-app phone camera scanning.
-
-## 3. Permanent cloud database
-The current Streamlit version is good for testing, but business data should move to Supabase/PostgreSQL before real public use.
-
-## 4. Seller accounts
-The marketplace foundation exists, but sellers eventually need their own login so they can:
-- add records
-- manage prices
-- see orders
-- see payouts
-- edit their storefront
-
-## 5. Listing fees and commissions
-The app already tracks commission rate and listing fee fields. The next step is automating invoices and payout reports.
-
-## 6. Checkout and payment processing
-To become a true marketplace, House Of Wax will eventually need Stripe, PayPal, or Shopify checkout.
-
-## 7. Record grading workflow
-A Discogs-style marketplace needs standard grading:
-- Media condition
-- Sleeve condition
-- Pressing notes
-- Photos
-- Return policy
-- Seller notes
-
-## 8. Shipping and local pickup
-Add shipping cost rules, local pickup, hold requests, and seller shipping responsibility.
-
-## 9. Barcode label printing
-For records without barcodes, House Of Wax should be able to create internal barcodes and printable shelf labels.
-
-## 10. Audit trail
-Track who changed inventory, who adjusted stock, and why.
+For real business use, media should eventually move to cloud storage like Supabase Storage, Cloudinary, Amazon S3, Google Drive, or Firebase Storage.
