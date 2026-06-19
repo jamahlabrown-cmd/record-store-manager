@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 from urllib.parse import quote_plus, urlparse, parse_qs
 
-DB = Path("house_of_wax_v9.db")
+DB = Path("house_of_wax_v10.db")
 MEDIA_DIR = Path("house_of_wax_media")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
 
@@ -29,6 +29,158 @@ def table(name):
     c.close()
     return df
 
+
+def get_store_setting(key, default=""):
+    try:
+        df = table("store_settings")
+        if df.empty:
+            return default
+        row = df[df.setting_key == key]
+        if row.empty:
+            return default
+        return str(row.iloc[0].setting_value or default)
+    except Exception:
+        return default
+
+def set_store_setting(key, value):
+    q("INSERT OR REPLACE INTO store_settings (setting_key, setting_value) VALUES (?, ?)", (key, str(value or "")))
+
+def get_store_settings():
+    return {
+        "store_name": get_store_setting("store_name", "House Of Wax"),
+        "tagline": get_store_setting("tagline", "Rare finds. Real records. Better digging."),
+        "announcement": get_store_setting("announcement", "New arrivals added often. Request a hold if you see something you like."),
+        "logo_url": get_store_setting("logo_url", ""),
+        "banner_url": get_store_setting("banner_url", ""),
+        "instagram_url": get_store_setting("instagram_url", ""),
+        "contact_email": get_store_setting("contact_email", ""),
+        "contact_phone": get_store_setting("contact_phone", ""),
+    }
+
+def save_brand_file(uploaded_file, label):
+    MEDIA_DIR.mkdir(exist_ok=True)
+    ext = Path(uploaded_file.name).suffix.lower()
+    safe_name = f"branding_{label}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}{ext}"
+    path = MEDIA_DIR / safe_name
+    path.write_bytes(uploaded_file.getbuffer())
+    return str(path)
+
+def first_uploaded_picture(sku):
+    media = get_media_for_sku(sku, public_only=True)
+    if media.empty:
+        return ""
+    pics = media[media.media_type == "Picture"] if "media_type" in media.columns else media.iloc[0:0]
+    if pics.empty:
+        return ""
+    p = str(pics.iloc[0].file_path)
+    return p if Path(p).exists() else ""
+
+def first_internet_thumbnail(sku):
+    links = get_internet_media_links(sku, public_only=True)
+    if links.empty:
+        return ""
+    for _, link in links.iterrows():
+        thumb = infer_thumbnail_url(link.get("media_type", ""), link.get("source", ""), link.get("url", ""), link.get("thumbnail_url", ""))
+        if thumb:
+            return thumb
+    return ""
+
+def product_thumbnail(record):
+    uploaded = first_uploaded_picture(record.sku)
+    if uploaded:
+        return uploaded
+    internet = first_internet_thumbnail(record.sku)
+    if internet:
+        return internet
+    image_url = str(getattr(record, "image_url", "") or "").strip()
+    if image_url:
+        return image_url
+    return ""
+
+def detect_media_source(url):
+    u = str(url or "").lower()
+    if "youtube.com" in u or "youtu.be" in u:
+        return "YouTube", "Video"
+    if "discogs.com" in u:
+        return "Discogs", "Reference"
+    if "bandcamp.com" in u:
+        return "Bandcamp", "Audio"
+    if "soundcloud.com" in u:
+        return "SoundCloud", "Audio"
+    if "archive.org" in u:
+        return "Internet Archive", "Reference"
+    if any(u.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]):
+        return "Direct Image", "Picture"
+    if any(u.endswith(ext) for ext in [".mp4", ".mov", ".m4v", ".webm"]):
+        return "Direct Video", "Video"
+    if any(u.endswith(ext) for ext in [".mp3", ".wav", ".m4a", ".aac", ".ogg"]):
+        return "Direct Audio", "Audio"
+    return "Other", "Reference"
+
+def render_hold_form(record, key_suffix=""):
+    with st.form(f"hold_{record.sku}_{key_suffix}"):
+        c1, c2 = st.columns(2)
+        name = c1.text_input("Name")
+        email = c2.text_input("Email")
+        phone = st.text_input("Phone")
+        message = st.text_area("Message", value=f"I am interested in {record.artist} — {record.title}.")
+        submitted = st.form_submit_button("Request Hold / Ask About This Record", use_container_width=True)
+        if submitted:
+            if not name or not email:
+                st.error("Name and email are required.")
+            else:
+                q("""INSERT INTO hold_requests
+                (request_date, sku, artist, title, customer_name, customer_email, customer_phone, message, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (date.today().isoformat(), record.sku, record.artist, record.title, name, email, phone, message, "New", datetime.now().isoformat(timespec="seconds")))
+                st.success("Request sent. We will follow up soon.")
+
+def render_media_gallery(record):
+    media = get_media_for_sku(record.sku, public_only=True)
+    internet_links = get_internet_media_links(record.sku, public_only=True)
+    if media.empty and internet_links.empty:
+        return
+    st.write("### Media")
+    if not media.empty:
+        render_media_assets(media)
+    if not internet_links.empty:
+        render_internet_media_links(internet_links)
+
+def render_product_detail(record):
+    st.button("← Back to all records", key="back_to_records", on_click=lambda: st.session_state.update({"selected_sku": ""}))
+    c1, c2 = st.columns([1, 1.2])
+    with c1:
+        thumb = product_thumbnail(record)
+        if thumb:
+            st.image(thumb, use_container_width=True)
+        render_media_gallery(record)
+    with c2:
+        st.header(f"{record.artist} — {record.title}")
+        st.caption("House Of Wax inventory" if record.owner_type == "Store" else f"House Of Wax seller #{int(record.seller_id)}")
+        st.markdown(f"## {money(record.price)}")
+        st.write(f"**Format:** {record.format}")
+        st.write(f"**Genre:** {record.genre}")
+        st.write(f"**Condition:** {record.condition}")
+        st.write(f"**Year:** {record.release_year}")
+        st.write(f"**Available:** {int(record.quantity)}")
+        if str(record.bio or "").strip():
+            st.write(record.bio)
+        st.divider()
+        render_hold_form(record, key_suffix="detail")
+
+def render_product_card(record):
+    with st.container(border=True):
+        thumb = product_thumbnail(record)
+        if thumb:
+            st.image(thumb, use_container_width=True)
+        else:
+            st.markdown("### 🎵")
+        st.markdown(f"**{record.artist} — {record.title}**")
+        st.caption(f"{record.format} • {record.genre} • {record.condition}")
+        st.markdown(f"### {money(record.price)}")
+        if st.button("View / Request Hold", key=f"view_{record.sku}", use_container_width=True):
+            st.session_state.selected_sku = record.sku
+            st.rerun()
 
 def ensure_internet_media_schema():
     c = conn()
@@ -102,6 +254,13 @@ def setup():
         notes TEXT,
         thumbnail_url TEXT,
         saved_at TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS store_settings (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT
     )
     """)
 
@@ -464,56 +623,91 @@ def delete_media_asset(media_id):
     q("DELETE FROM media_assets WHERE id = ?", (int(media_id),))
 
 
+def apply_storefront_css():
+    st.markdown("""
+    <style>
+    .block-container {padding-top: 1.5rem;}
+    div[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 18px; box-shadow: 0 2px 14px rgba(0,0,0,0.06);}
+    .how-hero {padding: 22px 26px; border-radius: 22px; background: linear-gradient(135deg, #111 0%, #3b2f2f 55%, #8a6f3d 100%); color: white; margin-bottom: 18px;}
+    .how-hero h1 {margin-bottom: 4px;}
+    .how-announcement {padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.12); margin-top: 12px;}
+    </style>
+    """, unsafe_allow_html=True)
+
 setup()
 st.set_page_config(page_title="House Of Wax", layout="wide")
 st.sidebar.title("House Of Wax")
 mode = st.sidebar.radio("Choose view", ["Public Storefront", "Seller Storefronts", "Admin Login"])
 
 if mode == "Public Storefront":
-    st.title("House Of Wax")
-    st.caption("Browse records, view media, and request a hold.")
+    apply_storefront_css()
+    settings = get_store_settings()
+    if settings["logo_url"]:
+        try:
+            st.sidebar.image(settings["logo_url"], use_container_width=True)
+        except Exception:
+            pass
+    st.markdown(f"""
+    <div class="how-hero">
+        <h1>{settings['store_name']}</h1>
+        <div>{settings['tagline']}</div>
+        <div class="how-announcement">{settings['announcement']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    if settings["banner_url"]:
+        st.image(settings["banner_url"], use_container_width=True)
+
     inv = table("inventory")
     if inv.empty:
         st.info("No public inventory yet.")
     else:
         public = inv[(inv.public_visible == "Yes") & (inv.quantity > 0) & (inv.listing_status == "Active")]
-        search = st.text_input("Search artist, title, genre, or barcode")
-        if search:
-            public = public[public.astype(str).apply(lambda col: col.str.contains(search, case=False, na=False)).any(axis=1)]
-        for _, r in public.iterrows():
-            with st.container(border=True):
-                st.subheader(f"{r.artist} — {r.title}")
-                st.caption("House Of Wax inventory" if r.owner_type == "Store" else f"House Of Wax seller #{int(r.seller_id)}")
-                st.write(f"{r.format} | {r.genre} | {r.condition} | {r.release_year}")
-                st.write(r.bio)
-                st.write(f"**Price:** {money(r.price)}")
-                st.write(f"**Available:** {int(r.quantity)}")
-                media = get_media_for_sku(r.sku, public_only=True)
-                if not media.empty:
-                    with st.expander("View uploaded photos, audio, and video"):
-                        render_media_assets(media)
-                internet_links = get_internet_media_links(r.sku, public_only=True)
-                if not internet_links.empty:
-                    with st.expander("Internet media links"):
-                        render_internet_media_links(internet_links)
-                with st.expander("Request hold"):
-                    with st.form(f"hold_{r.sku}"):
-                        name = st.text_input("Name")
-                        email = st.text_input("Email")
-                        phone = st.text_input("Phone")
-                        message = st.text_area("Message", value=f"I am interested in {r.artist} — {r.title}.")
-                        if st.form_submit_button("Send Request"):
-                            if not name or not email:
-                                st.error("Name and email are required.")
-                            else:
-                                q("""INSERT INTO hold_requests
-                                (request_date, sku, artist, title, customer_name, customer_email, customer_phone, message, status, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                (date.today().isoformat(), r.sku, r.artist, r.title, name, email, phone, message, "New", datetime.now().isoformat(timespec="seconds")))
-                                st.success("Request sent.")
-    st.warning("Public view hides costs, expenses, sales reports, customers, and admin tools.")
+        if "selected_sku" not in st.session_state:
+            st.session_state.selected_sku = ""
+
+        if st.session_state.selected_sku:
+            chosen = public[public.sku == st.session_state.selected_sku]
+            if chosen.empty:
+                st.session_state.selected_sku = ""
+                st.rerun()
+            else:
+                render_product_detail(chosen.iloc[0])
+        else:
+            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+            search = c1.text_input("Search records", placeholder="Artist, title, genre, barcode...")
+            genres = sorted([g for g in public.genre.dropna().astype(str).unique().tolist() if g.strip()])
+            genre_filter = c2.selectbox("Genre", ["All"] + genres)
+            condition_filter = c3.selectbox("Condition", ["All"] + sorted([g for g in public.condition.dropna().astype(str).unique().tolist() if g.strip()]))
+            sort_by = c4.selectbox("Sort", ["Newest", "Price low", "Price high", "Artist A-Z"])
+
+            if search:
+                public = public[public.astype(str).apply(lambda col: col.str.contains(search, case=False, na=False)).any(axis=1)]
+            if genre_filter != "All":
+                public = public[public.genre.astype(str) == genre_filter]
+            if condition_filter != "All":
+                public = public[public.condition.astype(str) == condition_filter]
+            if sort_by == "Price low":
+                public = public.sort_values("price", ascending=True)
+            elif sort_by == "Price high":
+                public = public.sort_values("price", ascending=False)
+            elif sort_by == "Artist A-Z":
+                public = public.sort_values(["artist", "title"], ascending=True)
+            else:
+                public = public.sort_values("updated_at", ascending=False) if "updated_at" in public.columns else public
+
+            st.caption(f"Showing {len(public)} available record(s).")
+            if public.empty:
+                st.info("No records match that search.")
+            else:
+                cols = st.columns(3)
+                for idx, (_, r) in enumerate(public.iterrows()):
+                    with cols[idx % 3]:
+                        render_product_card(r)
+
+    st.caption("Customer view hides costs, expenses, sales reports, and admin tools.")
 
 elif mode == "Seller Storefronts":
+    apply_storefront_css()
     st.title("House Of Wax Seller Storefronts")
     sellers = table("sellers")
     inv = table("inventory")
@@ -523,20 +717,16 @@ elif mode == "Seller Storefronts":
     else:
         choice = st.selectbox("Choose seller", [f"{r.id} | {r.store_name}" for _, r in approved.iterrows()])
         seller_id = int(choice.split("|")[0].strip())
-        st.header(approved[approved.id == seller_id].iloc[0].store_name)
+        seller = approved[approved.id == seller_id].iloc[0]
+        st.header(seller.store_name)
         items = inv[(inv.owner_type == "Marketplace Seller") & (inv.seller_id == seller_id) & (inv.quantity > 0)]
         if items.empty:
             st.info("This seller has no active listings.")
         else:
-            for _, r in items.iterrows():
-                with st.container(border=True):
-                    st.subheader(f"{r.artist} — {r.title}")
-                    st.write(f"{r.format} | {r.genre} | {r.condition}")
-                    st.write(f"**Price:** {money(r.price)}")
-                    media = get_media_for_sku(r.sku, public_only=True)
-                    if not media.empty:
-                        with st.expander("View media"):
-                            render_media_assets(media)
+            cols = st.columns(3)
+            for idx, (_, r) in enumerate(items.iterrows()):
+                with cols[idx % 3]:
+                    render_product_card(r)
 
 else:
     if "auth" not in st.session_state:
@@ -564,6 +754,32 @@ else:
 
     with tabs[0]:
         st.subheader("Dashboard")
+        with st.expander("Storefront Branding & Sales Settings", expanded=False):
+            settings = get_store_settings()
+            st.write("Add your logo, banner, tagline, contact info, and announcement. These show on the public storefront.")
+            with st.form("store_settings_form"):
+                store_name = st.text_input("Store name", value=settings["store_name"])
+                tagline = st.text_input("Tagline", value=settings["tagline"])
+                announcement = st.text_area("Storefront announcement", value=settings["announcement"])
+                logo_upload = st.file_uploader("Upload logo", type=["jpg", "jpeg", "png", "webp"], key="logo_upload")
+                banner_upload = st.file_uploader("Upload banner / hero image", type=["jpg", "jpeg", "png", "webp"], key="banner_upload")
+                logo_url = st.text_input("Logo URL or saved file path", value=settings["logo_url"])
+                banner_url = st.text_input("Banner URL or saved file path", value=settings["banner_url"])
+                instagram_url = st.text_input("Instagram URL", value=settings["instagram_url"])
+                contact_email = st.text_input("Contact email", value=settings["contact_email"])
+                contact_phone = st.text_input("Contact phone", value=settings["contact_phone"])
+                if st.form_submit_button("Save Storefront Settings"):
+                    if logo_upload is not None:
+                        logo_url = save_brand_file(logo_upload, "logo")
+                    if banner_upload is not None:
+                        banner_url = save_brand_file(banner_upload, "banner")
+                    for k, v in {
+                        "store_name": store_name, "tagline": tagline, "announcement": announcement,
+                        "logo_url": logo_url, "banner_url": banner_url, "instagram_url": instagram_url,
+                        "contact_email": contact_email, "contact_phone": contact_phone
+                    }.items():
+                        set_store_setting(k, v)
+                    st.success("Storefront settings saved.")
         inv = table("inventory")
         sellers = table("sellers")
         orders = table("orders")
@@ -692,7 +908,7 @@ else:
 
     with tabs[5]:
         st.subheader("Internet Media Finder")
-        st.write("Search trusted places for photos, audio, and video related to a record. Save useful links to the listing and add thumbnail previews so shoppers can see images and videos without extra clicks.")
+        st.write("Use this to quickly attach official media links and thumbnails. Paste a URL, and the app will guess the source, media type, and thumbnail when possible.")
 
         inv = table("inventory")
         if inv.empty:
@@ -724,13 +940,16 @@ else:
 
             st.divider()
             st.write("### Save a media link to this record")
-            source = st.selectbox("Source", ["Discogs", "YouTube", "Google Images", "Internet Archive", "Bandcamp", "SoundCloud", "Official Website", "Other"])
-            media_type = st.selectbox("Media Link Type", ["Picture", "Audio", "Video", "Reference"])
-            link_title = st.text_input("Link title", value=f"{record.artist} - {record.title}")
             media_url = st.text_input("Paste media/page URL")
+            detected_source, detected_type = detect_media_source(media_url) if media_url else ("YouTube", "Video")
+            csrc, ctype = st.columns(2)
+            source = csrc.selectbox("Source", ["YouTube", "Discogs", "Google Images", "Internet Archive", "Bandcamp", "SoundCloud", "Official Website", "Direct Image", "Direct Video", "Direct Audio", "Other"], index=["YouTube", "Discogs", "Google Images", "Internet Archive", "Bandcamp", "SoundCloud", "Official Website", "Direct Image", "Direct Video", "Direct Audio", "Other"].index(detected_source) if detected_source in ["YouTube", "Discogs", "Google Images", "Internet Archive", "Bandcamp", "SoundCloud", "Official Website", "Direct Image", "Direct Video", "Direct Audio", "Other"] else 10)
+            media_type = ctype.selectbox("Media Link Type", ["Picture", "Audio", "Video", "Reference"], index=["Picture", "Audio", "Video", "Reference"].index(detected_type) if detected_type in ["Picture", "Audio", "Video", "Reference"] else 3)
+            link_title = st.text_input("Link title", value=f"{record.artist} - {record.title}")
+            auto_thumb = infer_thumbnail_url(media_type, source, media_url, "") if media_url else ""
             public_visible = st.selectbox("Show this link on Public Storefront?", ["Yes", "No"], key="internet_public_visible")
             notes = st.text_area("Notes / usage rights / source details")
-            thumbnail_url = st.text_input("Optional thumbnail URL (useful for image/video preview)")
+            thumbnail_url = st.text_input("Optional thumbnail URL (auto-filled for YouTube/direct images when possible)", value=auto_thumb)
 
             if st.button("Save Internet Media Link"):
                 if not media_url.strip():
@@ -861,7 +1080,7 @@ else:
         confirm = st.text_input("Type DELETE ALL to wipe all app data")
         if st.button("Reset entire app"):
             if confirm == "DELETE ALL":
-                for t in ["inventory","media_assets","sellers","orders","expenses","hold_requests"]:
+                for t in ["inventory","media_assets","internet_media_links","sellers","orders","expenses","hold_requests","store_settings"]:
                     q(f"DELETE FROM {t}")
                 st.success("App reset.")
             else:
