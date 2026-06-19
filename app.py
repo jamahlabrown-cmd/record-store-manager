@@ -4,10 +4,11 @@ from pathlib import Path
 from datetime import date, datetime
 import pandas as pd
 import streamlit as st
+from urllib.parse import quote_plus
 
-DB = Path("house_of_wax_v7.db")
+DB = Path("house_of_wax_v8.db")
 MEDIA_DIR = Path("house_of_wax_media")
-ADMIN_PASSWORD = "Voodoo#71"
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
 
 
 def conn():
@@ -75,6 +76,21 @@ def setup():
         uploaded_at TEXT
     )
     """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS internet_media_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sku TEXT NOT NULL,
+        source TEXT,
+        media_type TEXT,
+        title TEXT,
+        url TEXT NOT NULL,
+        public_visible TEXT DEFAULT 'Yes',
+        notes TEXT,
+        saved_at TEXT
+    )
+    """)
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS sellers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -251,6 +267,66 @@ def save_inventory(row):
     c.close()
 
 
+
+def build_media_search_links(artist, title, label="", year=""):
+    base_query = " ".join([str(artist or ""), str(title or ""), str(label or ""), str(year or ""), "vinyl record"]).strip()
+    qv = quote_plus(base_query)
+    image_q = quote_plus(base_query + " album cover record")
+    audio_q = quote_plus(str(artist or "") + " " + str(title or "") + " audio")
+    video_q = quote_plus(str(artist or "") + " " + str(title or "") + " vinyl")
+    return {
+        "Discogs Release Search": f"https://www.discogs.com/search/?q={qv}&type=all",
+        "Google Images": f"https://www.google.com/search?tbm=isch&q={image_q}",
+        "YouTube": f"https://www.youtube.com/results?search_query={video_q}",
+        "Internet Archive": f"https://archive.org/search?query={qv}",
+        "Bandcamp": f"https://bandcamp.com/search?q={audio_q}",
+        "SoundCloud": f"https://soundcloud.com/search?q={audio_q}",
+        "General Web Search": f"https://www.google.com/search?q={qv}",
+    }
+
+def save_internet_media_link(sku, source, media_type, title, url, public_visible="Yes", notes=""):
+    q("""
+    INSERT INTO internet_media_links
+    (sku, source, media_type, title, url, public_visible, notes, saved_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        sku, source, media_type, title, url, public_visible, notes,
+        datetime.now().isoformat(timespec="seconds")
+    ))
+
+def get_internet_media_links(sku, public_only=False):
+    c = conn()
+    if public_only:
+        df = pd.read_sql_query(
+            "SELECT * FROM internet_media_links WHERE sku = ? AND public_visible = 'Yes' ORDER BY saved_at DESC",
+            c,
+            params=(sku,)
+        )
+    else:
+        df = pd.read_sql_query(
+            "SELECT * FROM internet_media_links WHERE sku = ? ORDER BY saved_at DESC",
+            c,
+            params=(sku,)
+        )
+    c.close()
+    return df
+
+def delete_internet_media_link(link_id):
+    q("DELETE FROM internet_media_links WHERE id = ?", (int(link_id),))
+
+def render_internet_media_links(link_df):
+    if link_df.empty:
+        return
+    for _, link in link_df.iterrows():
+        label = str(link.get("title", "") or link.get("url", "Media link"))
+        media_type = str(link.get("media_type", "") or "Media")
+        source = str(link.get("source", "") or "Internet")
+        notes = str(link.get("notes", "") or "")
+        st.markdown(f"**{media_type} — {source}:** [{label}]({link['url']})")
+        if notes:
+            st.caption(notes)
+
+
 def save_media_file(sku, uploaded_file, media_type, public_visible="Yes", caption_text=""):
     MEDIA_DIR.mkdir(exist_ok=True)
     safe_sku = "".join([ch for ch in str(sku) if ch.isalnum() or ch in ("-", "_")]) or "unknown"
@@ -336,8 +412,12 @@ if mode == "Public Storefront":
                 st.write(f"**Available:** {int(r.quantity)}")
                 media = get_media_for_sku(r.sku, public_only=True)
                 if not media.empty:
-                    with st.expander("View photos, audio, and video"):
+                    with st.expander("View uploaded photos, audio, and video"):
                         render_media_assets(media)
+                internet_links = get_internet_media_links(r.sku, public_only=True)
+                if not internet_links.empty:
+                    with st.expander("Internet media links"):
+                        render_internet_media_links(internet_links)
                 with st.expander("Request hold"):
                     with st.form(f"hold_{r.sku}"):
                         name = st.text_input("Name")
@@ -402,7 +482,7 @@ else:
         st.session_state.auth = False
         st.rerun()
 
-    tabs = st.tabs(["Dashboard", "Barcode Scanner", "Inventory", "Upload CSV", "Media Manager", "Sellers", "Seller Listings", "Marketplace Orders", "Expenses", "Hold Requests", "Cleanup", "Reports"])
+    tabs = st.tabs(['Dashboard', 'Barcode Scanner', 'Inventory', 'Upload CSV', 'Media Manager', 'Internet Media Finder', 'Sellers', 'Seller Listings', 'Marketplace Orders', 'Expenses', 'Hold Requests', 'Cleanup', 'Reports'])
 
     with tabs[0]:
         st.subheader("Dashboard")
@@ -531,7 +611,70 @@ else:
                     delete_media_asset(delete_choice)
                     st.success("Media deleted. Refresh or change tabs to update.")
 
+
     with tabs[5]:
+        st.subheader("Internet Media Finder")
+        st.write("Search trusted places for photos, audio, and video related to a record. Save useful links to the listing instead of downloading copyrighted files automatically.")
+
+        inv = table("inventory")
+        if inv.empty:
+            st.info("Add inventory first, then use Internet Media Finder.")
+        else:
+            item_choice = st.selectbox("Choose record to search", [f"{r.sku} | {r.artist} - {r.title}" for _, r in inv.iterrows()])
+            sku = item_choice.split("|")[0].strip()
+            record = inv[inv.sku == sku].iloc[0]
+
+            st.write(f"### {record.artist} — {record.title}")
+            st.caption(f"SKU: {sku}")
+
+            custom_query = st.text_input(
+                "Optional custom search words",
+                value=f"{record.artist} {record.title} {record.label or ''} {record.release_year or ''} vinyl record".strip()
+            )
+
+            links = build_media_search_links(record.artist, record.title, record.label, record.release_year)
+            if custom_query:
+                custom_q = quote_plus(custom_query)
+                links["Custom Google Images"] = f"https://www.google.com/search?tbm=isch&q={custom_q}"
+                links["Custom YouTube"] = f"https://www.youtube.com/results?search_query={custom_q}"
+                links["Custom Web Search"] = f"https://www.google.com/search?q={custom_q}"
+
+            st.write("### Search the internet")
+            st.caption("Open these links, find the best legal/official media, copy the URL, then save it below.")
+            for name, url in links.items():
+                st.link_button(name, url)
+
+            st.divider()
+            st.write("### Save a media link to this record")
+            source = st.selectbox("Source", ["Discogs", "YouTube", "Google Images", "Internet Archive", "Bandcamp", "SoundCloud", "Official Website", "Other"])
+            media_type = st.selectbox("Media Link Type", ["Picture", "Audio", "Video", "Reference"])
+            link_title = st.text_input("Link title", value=f"{record.artist} - {record.title}")
+            media_url = st.text_input("Paste media/page URL")
+            public_visible = st.selectbox("Show this link on Public Storefront?", ["Yes", "No"], key="internet_public_visible")
+            notes = st.text_area("Notes / usage rights / source details")
+
+            if st.button("Save Internet Media Link"):
+                if not media_url.strip():
+                    st.error("Paste a URL first.")
+                else:
+                    save_internet_media_link(sku, source, media_type, link_title, media_url.strip(), public_visible, notes)
+                    st.success("Saved internet media link to this record.")
+
+            st.write("### Saved Internet Media Links")
+            saved_links = get_internet_media_links(sku, public_only=False)
+            if saved_links.empty:
+                st.info("No internet media links saved for this record yet.")
+            else:
+                st.dataframe(saved_links[["id", "source", "media_type", "title", "url", "public_visible", "saved_at"]], use_container_width=True)
+                render_internet_media_links(saved_links)
+
+                delete_link = st.selectbox("Delete internet media link ID", [str(x) for x in saved_links["id"].tolist()])
+                if st.button("Delete Selected Internet Link"):
+                    delete_internet_media_link(delete_link)
+                    st.success("Internet media link deleted. Refresh or change tabs to update.")
+
+
+    with tabs[6]:
         st.subheader("House Of Wax Sellers / Sub-Stores")
         with st.form("seller"):
             c1,c2 = st.columns(2)
@@ -552,7 +695,7 @@ else:
                 st.success("Seller saved.")
         st.dataframe(table("sellers"), use_container_width=True)
 
-    with tabs[6]:
+    with tabs[7]:
         st.subheader("Create Seller Listing")
         sellers = table("sellers")
         approved = sellers[sellers.status == "Approved"] if not sellers.empty else sellers
@@ -585,7 +728,7 @@ else:
         if not inv.empty:
             st.dataframe(inv[inv.owner_type == "Marketplace Seller"], use_container_width=True)
 
-    with tabs[7]:
+    with tabs[8]:
         st.subheader("Marketplace Orders / Payouts")
         inv = table("inventory")
         active = inv[(inv.owner_type == "Marketplace Seller") & (inv.quantity > 0)] if not inv.empty else inv
@@ -611,7 +754,7 @@ else:
         orders = table("orders")
         st.dataframe(orders, use_container_width=True)
 
-    with tabs[8]:
+    with tabs[9]:
         st.subheader("Expenses")
         with st.form("expense"):
             c1,c2,c3 = st.columns(3)
@@ -626,11 +769,11 @@ else:
                 st.success("Expense added.")
         st.dataframe(table("expenses"), use_container_width=True)
 
-    with tabs[9]:
+    with tabs[10]:
         st.subheader("Hold Requests")
         st.dataframe(table("hold_requests"), use_container_width=True)
 
-    with tabs[10]:
+    with tabs[11]:
         st.subheader("Cleanup")
         if st.button("Delete sample inventory"):
             for sku in ["VIN-0001","VIN-0002","VIN-0003","CD-0001","MER-0001"]:
@@ -645,7 +788,7 @@ else:
             else:
                 st.error("Type DELETE ALL exactly.")
 
-    with tabs[11]:
+    with tabs[12]:
         st.subheader("Reports")
         report = st.selectbox("Report", ["inventory","media_assets","sellers","orders","expenses","hold_requests"])
         df = table(report)
