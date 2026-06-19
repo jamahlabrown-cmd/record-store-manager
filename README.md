@@ -1,104 +1,133 @@
 
-# Record Store Manager V3
+# House Of Wax
 
-This version adds the six suggested marketing/operations upgrades.
+V5 adds two major foundations:
 
-## New features added
+1. Barcode scanner / barcode lookup
+2. House Of Wax Marketplace seller storefronts similar to an early Discogs-style platform
 
-### 1. Post This Item button
-Select a record and instantly create several post styles:
-- Collector-focused
-- Casual
-- Sales-focused
-- Storytelling
+## Barcode Scanner
 
-### 2. Best time to post field
-When scheduling a post, the app recommends a good posting window based on platform and post type.
+This version supports USB and Bluetooth barcode scanners.
 
-### 3. Post status tracker
-Every scheduled post can be marked:
-- Scheduled
-- Posted
-- Skipped
-- Needs Edit
-- Sold Out - Do Not Post
+Most barcode scanners act like a keyboard. Use it like this:
 
-### 4. Sold-item protection
-If a record quantity is zero, the app warns you before posting or scheduling that record.
+1. Open Admin Login.
+2. Go to Barcode Scanner.
+3. Click inside the barcode field.
+4. Scan the record barcode.
+5. The barcode number appears automatically.
+6. If it exists, the app shows the record.
+7. If it does not exist, the app lets you add the record.
 
-### 5. Wishlist matching
-The app checks customer wishlists and favorite genres against inventory.
+## Phone Camera Scanner
 
-Example:
-If a customer wants jazz or Miles Davis, and you upload Miles Davis, the system shows a match and gives you a copy-ready customer message.
+This version does not yet decode barcodes from the phone camera.
 
-### 6. Weekly marketing plan
-The app generates a 7-day marketing plan with:
-- Daily theme
-- Recommended record
-- Suggested action
-- Draft caption
-- Hashtags
+That should be a future upgrade using:
+- a custom Streamlit camera barcode component,
+- a separate mobile scanner app,
+- or Discogs/API lookup after barcode entry.
 
-## Other core features
+## House Of Wax Marketplace / Sub-Stores
 
-- Inventory tracking
-- CSV inventory upload
-- Record bios
-- Auto-generated captions and hashtags
-- Social media scheduler
-- Content calendar download
-- Expense tracking
-- Daily operations tracking
-- Customer wishlist database
-- Reports
+This version adds:
 
-## How to run
+- Seller profiles
+- Seller approval
+- Seller storefronts
+- Seller listings
+- Commission percentage
+- Listing fee tracking
+- House Of Wax Marketplace order recording
+- Platform fee calculation
+- Seller payout calculation
+- Public seller storefront preview
 
-Unzip this folder.
+## Still needed for a real Discogs-style marketplace
 
-Open Terminal inside the folder and run:
+- Seller login
+- Buyer checkout
+- Stripe or PayPal payments
+- Shipping labels
+- Tax settings
+- Seller payout automation
+- Seller terms and agreements
+- Product grading rules
+- Cloud database such as Supabase or PostgreSQL
 
-```bash
-pip3 install -r requirements.txt
-streamlit run app.py
-```
+## Admin Password
 
-If that does not work, run:
+Default:
 
-```bash
-python3 -m streamlit run app.py
-```
+changeme123
 
-## Upload file
+Change this in app.py before sharing publicly:
 
-Use `sample_inventory_v3.csv` to test the upload feature.
+ADMIN_PASSWORD = "changeme123"
 
-Supported CSV columns:
+## Deploy
 
-```csv
-sku,artist,title,format,genre,condition,label,release_year,pressing_notes,cost,price,quantity,reorder_level,location,bio,social_caption,hashtags,image_url
-```
+Upload these files to GitHub:
 
-Required:
+- app.py
+- requirements.txt
+- README.md
+- QUICK_START.md
+- sample_inventory_house_of_wax.csv
+
+Then redeploy/reboot Streamlit.
+
+
+# House Of Wax Improvement Roadmap
+
+Based on similar tools like Discogs, Square for Retail, Shopify POS, and barcode inventory apps, the strongest next upgrades are:
+
+## 1. Discogs-style barcode lookup
+The current app can store and search barcodes. The next major step is connecting a music database/API so scanning a barcode can automatically pull:
 - artist
-- title
-
-Recommended:
-- sku
+- album title
+- label
+- release year
 - format
 - genre
-- condition
-- cost
-- price
-- quantity
-- reorder_level
-- location
+- pressing/version notes
+- market value estimate
 
-## Important note about social posting
+## 2. True phone-camera barcode scanner
+Right now the app works best with a USB/Bluetooth scanner or QRbot copy/paste. A future upgrade should add in-app phone camera scanning.
 
-This app helps you create, schedule, organize, and track posts.
+## 3. Permanent cloud database
+The current Streamlit version is good for testing, but business data should move to Supabase/PostgreSQL before real public use.
 
-It does not directly auto-post to Instagram, Facebook, or TikTok yet.
+## 4. Seller accounts
+The marketplace foundation exists, but sellers eventually need their own login so they can:
+- add records
+- manage prices
+- see orders
+- see payouts
+- edit their storefront
 
-Direct posting would require official API setup or a tool like Buffer, Later, Hootsuite, Zapier, Shopify, Square, or Meta Business Suite.
+## 5. Listing fees and commissions
+The app already tracks commission rate and listing fee fields. The next step is automating invoices and payout reports.
+
+## 6. Checkout and payment processing
+To become a true marketplace, House Of Wax will eventually need Stripe, PayPal, or Shopify checkout.
+
+## 7. Record grading workflow
+A Discogs-style marketplace needs standard grading:
+- Media condition
+- Sleeve condition
+- Pressing notes
+- Photos
+- Return policy
+- Seller notes
+
+## 8. Shipping and local pickup
+Add shipping cost rules, local pickup, hold requests, and seller shipping responsibility.
+
+## 9. Barcode label printing
+For records without barcodes, House Of Wax should be able to create internal barcodes and printable shelf labels.
+
+## 10. Audit trail
+Track who changed inventory, who adjusted stock, and why.
