@@ -1,0 +1,6 @@
+sku,artist,title,format,genre,condition,label,release_year,pressing_notes,cost,price,quantity,reorder_level,location,bio,social_caption,hashtags,image_url
+VIN-0001,Miles Davis,Kind of Blue,Vinyl,Jazz,Used - VG+,Columbia,1959,Classic jazz pressing,12.00,29.99,4,2,A1,,,,https://example.com/kind-of-blue.jpg
+VIN-0002,Stevie Wonder,Songs in the Key of Life,Vinyl,Soul,Used - VG,Tamla,1976,Double LP,10.00,24.99,2,2,A2,,,,
+VIN-0003,Nirvana,Nevermind,Vinyl,Rock,New,DGC,1991,Reissue,18.00,34.99,6,3,B1,,,,
+CD-0001,OutKast,Aquemini,CD,Hip-Hop,Used - Good,LaFace,1998,Original CD,3.00,9.99,5,2,C1,,,,
+MER-0001,Store Logo Tote Bag,Black Tote,Merch,Accessories,New,Store Brand,2026,Black cotton tote,4.50,14.99,12,5,Front Counter,,,,
