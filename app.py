@@ -1,12 +1,14 @@
 
 import sqlite3
+import json
 from pathlib import Path
 from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 from urllib.parse import quote_plus, urlparse, parse_qs
+from urllib.request import Request, urlopen
 
-DB = Path("house_of_wax_v10.db")
+DB = Path("house_of_wax_v11.db")
 MEDIA_DIR = Path("house_of_wax_media")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
 
@@ -55,6 +57,9 @@ def get_store_settings():
         "instagram_url": get_store_setting("instagram_url", ""),
         "contact_email": get_store_setting("contact_email", ""),
         "contact_phone": get_store_setting("contact_phone", ""),
+        "pickup_note": get_store_setting("pickup_note", "Pickup and local hold options available."),
+        "shipping_note": get_store_setting("shipping_note", "Shipping available on request."),
+        "payment_link": get_store_setting("payment_link", ""),
     }
 
 def save_brand_file(uploaded_file, label):
@@ -117,6 +122,68 @@ def detect_media_source(url):
         return "Direct Audio", "Audio"
     return "Other", "Reference"
 
+def normalize_barcode(value):
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+def barcode_search_links(barcode, catalog_number="", artist="", title=""):
+    bc = normalize_barcode(barcode)
+    cat = quote_plus(str(catalog_number or ""))
+    text_query = quote_plus(" ".join([str(artist or ""), str(title or ""), str(catalog_number or "")]).strip())
+    links = {}
+    if bc:
+        links["Discogs barcode search"] = f"https://www.discogs.com/search/?barcode={bc}&type=release"
+        links["Discogs general UPC search"] = f"https://www.discogs.com/search/?q={bc}&type=release"
+        links["MusicBrainz barcode search"] = f"https://musicbrainz.org/search?query=barcode%3A{bc}&type=release&method=advanced"
+        links["Google UPC search"] = f"https://www.google.com/search?q={bc}+album+barcode+record"
+    if catalog_number:
+        links["Discogs catalog number search"] = f"https://www.discogs.com/search/?catno={cat}&type=release"
+        links["MusicBrainz catalog search"] = f"https://musicbrainz.org/search?query=catno%3A{cat}&type=release&method=advanced"
+    if text_query:
+        links["Artist/title fallback search"] = f"https://www.discogs.com/search/?q={text_query}&type=release"
+    return links
+
+def musicbrainz_lookup_by_barcode(barcode):
+    bc = normalize_barcode(barcode)
+    if not bc:
+        return []
+    url = f"https://musicbrainz.org/ws/2/release/?query=barcode:{bc}&fmt=json&limit=5"
+    try:
+        req = Request(url, headers={"User-Agent": "HouseOfWaxInventory/1.0 (contact: admin@houseofwax.local)"})
+        with urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        results = []
+        for rel in data.get("releases", []):
+            artist_credit = rel.get("artist-credit", [])
+            artist = "".join([a.get("name", "") if isinstance(a, dict) else str(a) for a in artist_credit]).strip()
+            labels = rel.get("label-info", []) or []
+            label = ""
+            catalog = ""
+            if labels:
+                label = ((labels[0].get("label") or {}).get("name") or "")
+                catalog = labels[0].get("catalog-number") or ""
+            media = rel.get("media", []) or []
+            fmt = media[0].get("format", "") if media else ""
+            results.append({
+                "artist": artist,
+                "title": rel.get("title", ""),
+                "release_year": str(rel.get("date", ""))[:4],
+                "label": label,
+                "catalog_number": catalog,
+                "format": fmt or "Vinyl/CD/Cassette",
+                "barcode": bc,
+                "external_release_url": "https://musicbrainz.org/release/" + rel.get("id", ""),
+                "metadata_source": "MusicBrainz barcode lookup",
+            })
+        return results
+    except Exception:
+        return []
+
+def save_purchase_request(record, request_type, name, email, phone, pickup_or_shipping, address, message):
+    q("""INSERT INTO purchase_requests
+    (request_date, sku, artist, title, request_type, customer_name, customer_email, customer_phone, pickup_or_shipping, address, message, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    (date.today().isoformat(), record.sku, record.artist, record.title, request_type, name, email, phone, pickup_or_shipping, address, message, "New", datetime.now().isoformat(timespec="seconds")))
+
 def render_hold_form(record, key_suffix=""):
     with st.form(f"hold_{record.sku}_{key_suffix}"):
         c1, c2 = st.columns(2)
@@ -162,9 +229,18 @@ def render_product_detail(record):
         st.write(f"**Genre:** {record.genre}")
         st.write(f"**Condition:** {record.condition}")
         st.write(f"**Year:** {record.release_year}")
+        if str(getattr(record, "catalog_number", "") or "").strip():
+            st.write(f"**Catalog #:** {record.catalog_number}")
+        if str(getattr(record, "barcode", "") or "").strip():
+            st.write(f"**Barcode/UPC:** {record.barcode}")
         st.write(f"**Available:** {int(record.quantity)}")
         if str(record.bio or "").strip():
             st.write(record.bio)
+        settings = get_store_settings()
+        if settings.get("payment_link"):
+            st.link_button("Pay / Checkout Link", settings["payment_link"], use_container_width=True)
+        st.caption(settings.get("pickup_note", ""))
+        st.caption(settings.get("shipping_note", ""))
         st.divider()
         render_hold_form(record, key_suffix="detail")
 
@@ -178,9 +254,40 @@ def render_product_card(record):
         st.markdown(f"**{record.artist} — {record.title}**")
         st.caption(f"{record.format} • {record.genre} • {record.condition}")
         st.markdown(f"### {money(record.price)}")
-        if st.button("View / Request Hold", key=f"view_{record.sku}", use_container_width=True):
+        if st.button("View / Reserve", key=f"view_{record.sku}", use_container_width=True):
             st.session_state.selected_sku = record.sku
             st.rerun()
+
+def ensure_house_of_wax_schema():
+    c = conn()
+    cur = c.cursor()
+    try:
+        inv_cols = [row[1] for row in cur.execute("PRAGMA table_info(inventory)").fetchall()]
+        for col in ["catalog_number", "matrix_runout", "external_release_url", "metadata_source"]:
+            if col not in inv_cols:
+                cur.execute(f"ALTER TABLE inventory ADD COLUMN {col} TEXT")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS purchase_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_date TEXT,
+            sku TEXT,
+            artist TEXT,
+            title TEXT,
+            request_type TEXT,
+            customer_name TEXT,
+            customer_email TEXT,
+            customer_phone TEXT,
+            pickup_or_shipping TEXT,
+            address TEXT,
+            message TEXT,
+            status TEXT DEFAULT 'New',
+            created_at TEXT
+        )
+        """)
+        c.commit()
+    except Exception:
+        pass
+    c.close()
 
 def ensure_internet_media_schema():
     c = conn()
@@ -203,6 +310,10 @@ def setup():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sku TEXT UNIQUE,
         barcode TEXT,
+        catalog_number TEXT,
+        matrix_runout TEXT,
+        external_release_url TEXT,
+        metadata_source TEXT,
         artist TEXT NOT NULL,
         title TEXT NOT NULL,
         format TEXT DEFAULT 'Vinyl',
@@ -304,6 +415,25 @@ def setup():
     )
     """)
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS purchase_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_date TEXT,
+        sku TEXT,
+        artist TEXT,
+        title TEXT,
+        request_type TEXT,
+        customer_name TEXT,
+        customer_email TEXT,
+        customer_phone TEXT,
+        pickup_or_shipping TEXT,
+        address TEXT,
+        message TEXT,
+        status TEXT DEFAULT 'New',
+        created_at TEXT
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS hold_requests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         request_date TEXT,
@@ -320,6 +450,7 @@ def setup():
     """)
     c.commit()
     c.close()
+    ensure_house_of_wax_schema()
 
 
 def money(x):
@@ -342,15 +473,46 @@ def sku_for(artist, title, barcode=""):
 
 
 def bio(row):
-    artist, title, genre, fmt = s(row.get("artist","")), s(row.get("title","")), s(row.get("genre","")), s(row.get("format","Vinyl"))
-    condition, year = s(row.get("condition","")), s(row.get("release_year",""))
-    text = f"{artist}'s {title}"
+    artist = s(row.get("artist", ""))
+    title = s(row.get("title", ""))
+    genre = s(row.get("genre", ""))
+    fmt = s(row.get("format", "Vinyl")) or "record"
+    condition = s(row.get("condition", ""))
+    year = s(row.get("release_year", ""))
+    label = s(row.get("label", ""))
+    pressing = s(row.get("pressing_notes", ""))
+    catalog = s(row.get("catalog_number", ""))
+    barcode = s(row.get("barcode", ""))
+
+    parts = []
+    opening = f"{artist} — {title}" if artist and title else title or artist or "This release"
     if year:
-        text += f" ({year})"
-    text += f" is a standout {genre.lower()} release on {fmt.lower()}." if genre else f" is a standout release on {fmt.lower()}."
+        opening += f" ({year})"
+    opening += f" is a strong {fmt.lower()} listing for listeners, collectors, and anyone building a deeper music library."
+    if genre:
+        opening += f" The sound sits in the {genre} lane, making it a useful pick for both everyday listening and focused digging."
+    parts.append(opening)
+
+    detail = ""
+    if label:
+        detail += f" Released on {label},"
+    else:
+        detail += " This copy"
     if condition:
-        text += f" This copy is listed in {condition} condition."
-    return text + " A strong pickup for collectors, DJs, and music lovers."
+        detail += f" is listed in {condition} condition"
+    else:
+        detail += " is ready for review"
+    if pressing:
+        detail += f" with notes that may matter to buyers: {pressing}"
+    if catalog:
+        detail += f". Catalog number: {catalog}"
+    if barcode:
+        detail += f". Barcode/UPC: {barcode}"
+    detail += "."
+    parts.append(detail)
+
+    parts.append("House Of Wax recommends checking the photos, media previews, and condition notes before requesting a hold or purchase. If this is a rare pressing, limited issue, import, clean used copy, or hard-to-find format, those details can make the listing more valuable and easier for the right buyer to find.")
+    return " ".join(parts)
 
 
 def caption(row):
@@ -385,6 +547,10 @@ def save_inventory(row):
     data = {
         "sku": sku,
         "barcode": barcode,
+        "catalog_number": s(row.get("catalog_number", "")) or s(row.get("catno", "")) or s(row.get("catalog", "")),
+        "matrix_runout": s(row.get("matrix_runout", "")) or s(row.get("matrix", "")) or s(row.get("runout", "")),
+        "external_release_url": s(row.get("external_release_url", "")) or s(row.get("discogs_url", "")) or s(row.get("musicbrainz_url", "")),
+        "metadata_source": s(row.get("metadata_source", "")),
         "artist": artist,
         "title": title,
         "format": s(row.get("format","Vinyl")) or "Vinyl",
@@ -420,15 +586,15 @@ def save_inventory(row):
     c = conn()
     c.execute("""
     INSERT INTO inventory
-    (sku, barcode, artist, title, format, genre, condition, label, release_year, pressing_notes,
+    (sku, barcode, catalog_number, matrix_runout, external_release_url, metadata_source, artist, title, format, genre, condition, label, release_year, pressing_notes,
     cost, price, quantity, reorder_level, location, bio, caption, hashtags, image_url, public_visible,
     owner_type, seller_id, commission_rate, listing_fee, listing_status, updated_at)
     VALUES
-    (:sku, :barcode, :artist, :title, :format, :genre, :condition, :label, :release_year, :pressing_notes,
+    (:sku, :barcode, :catalog_number, :matrix_runout, :external_release_url, :metadata_source, :artist, :title, :format, :genre, :condition, :label, :release_year, :pressing_notes,
     :cost, :price, :quantity, :reorder_level, :location, :bio, :caption, :hashtags, :image_url, :public_visible,
     :owner_type, :seller_id, :commission_rate, :listing_fee, :listing_status, :updated_at)
     ON CONFLICT(sku) DO UPDATE SET
-    barcode=excluded.barcode, artist=excluded.artist, title=excluded.title, format=excluded.format,
+    barcode=excluded.barcode, catalog_number=excluded.catalog_number, matrix_runout=excluded.matrix_runout, external_release_url=excluded.external_release_url, metadata_source=excluded.metadata_source, artist=excluded.artist, title=excluded.title, format=excluded.format,
     genre=excluded.genre, condition=excluded.condition, label=excluded.label, release_year=excluded.release_year,
     pressing_notes=excluded.pressing_notes, cost=excluded.cost, price=excluded.price, quantity=excluded.quantity,
     reorder_level=excluded.reorder_level, location=excluded.location, bio=excluded.bio, caption=excluded.caption,
@@ -768,6 +934,9 @@ else:
                 instagram_url = st.text_input("Instagram URL", value=settings["instagram_url"])
                 contact_email = st.text_input("Contact email", value=settings["contact_email"])
                 contact_phone = st.text_input("Contact phone", value=settings["contact_phone"])
+                pickup_note = st.text_input("Pickup note", value=settings.get("pickup_note", ""))
+                shipping_note = st.text_input("Shipping note", value=settings.get("shipping_note", ""))
+                payment_link = st.text_input("Optional payment/checkout link", value=settings.get("payment_link", ""))
                 if st.form_submit_button("Save Storefront Settings"):
                     if logo_upload is not None:
                         logo_url = save_brand_file(logo_upload, "logo")
@@ -776,7 +945,8 @@ else:
                     for k, v in {
                         "store_name": store_name, "tagline": tagline, "announcement": announcement,
                         "logo_url": logo_url, "banner_url": banner_url, "instagram_url": instagram_url,
-                        "contact_email": contact_email, "contact_phone": contact_phone
+                        "contact_email": contact_email, "contact_phone": contact_phone,
+                        "pickup_note": pickup_note, "shipping_note": shipping_note, "payment_link": payment_link
                     }.items():
                         set_store_setting(k, v)
                     st.success("Storefront settings saved.")
@@ -797,31 +967,66 @@ else:
             st.dataframe(inv[inv.quantity <= inv.reorder_level][["sku","barcode","artist","title","quantity","reorder_level","location"]], use_container_width=True)
 
     with tabs[1]:
-        st.subheader("Barcode Scanner / Barcode Entry")
-        st.write("Use QRbot, a USB scanner, or a Bluetooth scanner. Paste or scan the barcode below.")
-        barcode = st.text_input("Scan or type barcode")
+        st.subheader("Two-Way Barcode Scanner / Release Lookup")
+        st.write("Use a USB/Bluetooth scanner, QRbot, or manually type the barcode from the back cover. The barcode can find an existing item in your inventory or help identify album metadata from MusicBrainz/Discogs.")
+        barcode = st.text_input("Scan or type barcode / UPC / EAN")
+        catalog_lookup = st.text_input("Optional catalog number from spine/back cover")
         inv = table("inventory")
         if barcode:
-            found = inv[inv.barcode.astype(str) == str(barcode)] if not inv.empty else inv
+            clean_barcode = normalize_barcode(barcode)
+            found = inv[inv.barcode.astype(str).str.replace(r"\\D", "", regex=True) == clean_barcode] if not inv.empty else inv
             if not found.empty:
-                st.success("Barcode found.")
+                st.success("Barcode found in House Of Wax inventory.")
                 st.dataframe(found, use_container_width=True)
             else:
-                st.warning("Barcode not found. Add it below.")
-                with st.form("barcode_add"):
-                    artist = st.text_input("Artist")
-                    title = st.text_input("Title")
-                    c1,c2,c3 = st.columns(3)
-                    fmt = c1.selectbox("Format", ["Vinyl","CD","Cassette","DVD","Merch","Other"])
-                    genre = c2.text_input("Genre")
-                    condition = c3.text_input("Condition")
-                    c4,c5,c6 = st.columns(3)
-                    cost = c4.number_input("Cost", min_value=0.0, step=0.01)
-                    price = c5.number_input("Price", min_value=0.0, step=0.01)
-                    quantity = c6.number_input("Quantity", min_value=1, value=1)
-                    if st.form_submit_button("Add Record From Barcode"):
-                        save_inventory({"barcode": barcode, "artist": artist, "title": title, "format": fmt, "genre": genre, "condition": condition, "cost": cost, "price": price, "quantity": quantity})
-                        st.success("Record added.")
+                st.warning("Barcode not found in your inventory yet. Use lookup tools below to identify and add it.")
+
+            st.write("### Fast web lookups")
+            st.caption("Barcode is usually the first identifier to try. Catalog number and matrix/runout help narrow down exact pressings.")
+            for name, url in barcode_search_links(clean_barcode, catalog_lookup).items():
+                st.link_button(name, url)
+
+            st.write("### Try MusicBrainz auto-lookup")
+            if st.button("Lookup barcode metadata"):
+                results = musicbrainz_lookup_by_barcode(clean_barcode)
+                st.session_state["barcode_lookup_results"] = results
+                if not results:
+                    st.error("No automatic MusicBrainz results found. Try the Discogs barcode/catalog search buttons above.")
+
+            results = st.session_state.get("barcode_lookup_results", [])
+            if results:
+                st.success(f"Found {len(results)} possible release match(es).")
+                for i, res in enumerate(results):
+                    with st.expander(f"Match {i+1}: {res.get('artist','')} — {res.get('title','')}", expanded=(i==0)):
+                        st.json(res)
+                        c1,c2,c3 = st.columns(3)
+                        condition = c1.text_input("Condition", value="Used - Review", key=f"lookup_cond_{i}")
+                        price = c2.number_input("Price", min_value=0.0, step=0.01, key=f"lookup_price_{i}")
+                        quantity = c3.number_input("Quantity", min_value=1, value=1, key=f"lookup_qty_{i}")
+                        if st.button("Add this match to inventory", key=f"add_lookup_{i}"):
+                            item = dict(res)
+                            item.update({"condition": condition, "price": price, "quantity": quantity, "public_visible": "No"})
+                            save_inventory(item)
+                            st.success("Added as private inventory. Review it, add media, then mark Public Visible = Yes when ready.")
+
+            st.write("### Add manually from barcode")
+            with st.form("barcode_add"):
+                artist = st.text_input("Artist")
+                title = st.text_input("Title")
+                c1,c2,c3 = st.columns(3)
+                fmt = c1.selectbox("Format", ["Vinyl","CD","Cassette","DVD","Merch","Other"])
+                genre = c2.text_input("Genre")
+                condition = c3.text_input("Condition")
+                c4,c5,c6 = st.columns(3)
+                cost = c4.number_input("Cost", min_value=0.0, step=0.01)
+                price = c5.number_input("Price", min_value=0.0, step=0.01)
+                quantity = c6.number_input("Quantity", min_value=1, value=1)
+                label = st.text_input("Label")
+                release_year = st.text_input("Release year")
+                pressing_notes = st.text_area("Pressing / identifier notes", placeholder="Catalog number, matrix/runout, promo, club edition, country, etc.")
+                if st.form_submit_button("Add Record From Barcode"):
+                    save_inventory({"barcode": clean_barcode, "catalog_number": catalog_lookup, "artist": artist, "title": title, "format": fmt, "genre": genre, "condition": condition, "cost": cost, "price": price, "quantity": quantity, "label": label, "release_year": release_year, "pressing_notes": pressing_notes})
+                    st.success("Record added.")
 
     with tabs[2]:
         st.subheader("Inventory")
@@ -831,8 +1036,11 @@ else:
             st.subheader("Add / Edit")
             c1,c2,c3 = st.columns(3)
             sku = c1.text_input("SKU")
-            barcode = c2.text_input("Barcode")
+            barcode = c2.text_input("Barcode / UPC / EAN")
             public_visible = c3.selectbox("Public Visible", ["Yes","No"])
+            ccat1, ccat2 = st.columns(2)
+            catalog_number = ccat1.text_input("Catalog number")
+            matrix_runout = ccat2.text_input("Matrix/runout")
             c4,c5 = st.columns(2)
             artist = c4.text_input("Artist")
             title = c5.text_input("Title")
@@ -846,8 +1054,11 @@ else:
             quantity = c11.number_input("Quantity", min_value=0, step=1)
             reorder = c12.number_input("Reorder Level", min_value=0, value=2)
             location = st.text_input("Location")
+            label = st.text_input("Label")
+            release_year = st.text_input("Release year")
+            pressing_notes = st.text_area("Pressing notes / identifiers")
             if st.form_submit_button("Save"):
-                save_inventory({"sku":sku,"barcode":barcode,"artist":artist,"title":title,"format":fmt,"genre":genre,"condition":condition,"cost":cost,"price":price,"quantity":quantity,"reorder_level":reorder,"location":location,"public_visible":public_visible})
+                save_inventory({"sku":sku,"barcode":barcode,"artist":artist,"title":title,"format":fmt,"genre":genre,"condition":condition,"cost":cost,"price":price,"quantity":quantity,"reorder_level":reorder,"location":location,"public_visible":public_visible,"catalog_number":catalog_number,"matrix_runout":matrix_runout,"label":label,"release_year":release_year,"pressing_notes":pressing_notes})
                 st.success("Saved.")
 
     with tabs[3]:
@@ -1070,6 +1281,8 @@ else:
     with tabs[10]:
         st.subheader("Hold Requests")
         st.dataframe(table("hold_requests"), use_container_width=True)
+        st.subheader("Purchase / Reserve Requests")
+        st.dataframe(table("purchase_requests"), use_container_width=True)
 
     with tabs[11]:
         st.subheader("Cleanup")
