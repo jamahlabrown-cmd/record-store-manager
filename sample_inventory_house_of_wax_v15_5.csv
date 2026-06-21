@@ -1,0 +1,2 @@
+seller_id,sku,barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,video_url,audio_url,external_release_url,listing_status,listing_type,created_at,updated_at
+1,HOW-DEMO-001,602547234567,CAT-001,MATRIX-A1,Vinyl Records,Demo Artist,Demo Album,Vinyl,Demo Label,1978,Soul,VG+,VG,Light sleeve wear; media plays strong.,Demo listing for House Of Wax marketplace testing.,24.99,1,5.00,,,,,Active,Fixed Price,2026-06-21T00:00:00,2026-06-21T00:00:00

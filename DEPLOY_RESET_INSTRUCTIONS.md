@@ -1,19 +1,15 @@
 # Deploy Reset Instructions
 
-The app must show:
+Upload the files inside the ZIP. Do not upload the ZIP itself as the app.
 
-`Running V15.4 FIX + TESTING PATCH`
-
-If it does not, the new `app.py` was not uploaded or Streamlit is running an old file.
-
-## Upload Checklist
-
-Upload files individually, not the ZIP itself.
-
-Most important:
+Most important files:
 
 - app.py
 - requirements.txt
 - runtime.txt
 
-Then reboot Streamlit.
+After upload, reboot Streamlit.
+
+Confirm the app says:
+
+`Running V15.5 COMMUNITY + SELLER STORE PATCH`

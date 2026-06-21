@@ -1,25 +1,9 @@
-# House Of Wax Marketplace Policy Summary
+# Marketplace Policy Summary
 
-## Core Rule
+House Of Wax is a community marketplace.
 
-House Of Wax approves sellers, not every listing.
+Sellers create stores, profiles, policies, products, and customer experience. Buyers register, buy, save, bid, and leave feedback.
 
-Approved sellers may publish fixed-price listings immediately. Listings and sellers can be reported for review.
+House Of Wax approves sellers, not every listing. Bad listings and bad sellers can be reported.
 
-## Seller Rules
-
-Seller policies can be stronger or more generous than House Of Wax rules, but never weaker.
-
-Sellers may create their own shipping, return, grading, customer service, buyer requirements, local pickup, bundle, and auction policies.
-
-## Buyer Rules
-
-Buyers must register and are accountable. Buyers can be rated, restricted, or suspended for unpaid orders, abusive behavior, false claims, or repeated marketplace abuse.
-
-## Auctions
-
-Auctions are earned through seller performance or admin override.
-
-## Platform Controls
-
-House Of Wax controls seller approval, buyer status, seller status, flagged listings, seller reports, disputes, platform rules, fees, and marketplace trust.
+Both buyers and sellers are rated.

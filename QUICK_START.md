@@ -1,26 +1,23 @@
-# Quick Start
+# Quick Start V15.6
 
-1. Upload all files to GitHub, especially `app.py`.
-2. In Streamlit, set Secrets:
+1. Upload all files individually to GitHub.
+2. Reboot Streamlit.
+3. Confirm the app says:
 
-```toml
-ADMIN_PASSWORD = "your-private-password"
-```
+`Running V15.6 COMMUNITY MOMENTUM PATCH`
 
-3. Reboot the app.
-4. Confirm the app says:
-
-`Running V15.4 FIX + TESTING PATCH`
-
-## Test Flow
+## Test the new features
 
 1. Register buyer.
-2. Apply as seller.
+2. Create seller store application.
 3. Admin approves seller.
-4. Seller logs in and creates policies.
-5. Seller adds product.
-6. Product appears in Marketplace.
-7. Buyer saves item or sends Request to Buy.
-8. Seller sees buyer rating and order.
-9. Seller updates order or marks buyer non-paying.
-10. Admin reviews reports, flags, sellers, buyers, and test cleanup.
+4. Seller logs in.
+5. Seller adds logo/banner/profile.
+6. Seller uploads product.
+7. Seller adds product gallery images.
+8. Buyer follows seller.
+9. Buyer messages seller from product page.
+10. Seller checks Messages tab.
+11. Seller creates announcement and event/drop.
+12. Admin adds seller badge.
+13. Admin creates Seller Spotlight post.

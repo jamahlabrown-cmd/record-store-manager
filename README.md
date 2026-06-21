@@ -1,40 +1,31 @@
-# House Of Wax V15.4 Fix + Testing Patch
+# House Of Wax V15.6 Community Momentum Patch
 
-This version adds the first full batch of fixes after the V15.3 clean reset.
+This version adds the next community layer.
 
 You should see:
 
-`Running V15.4 FIX + TESTING PATCH`
+`Running V15.6 COMMUNITY MOMENTUM PATCH`
 
-inside the app. If not, Streamlit is still running an old file.
+## New in V15.6
 
-## Main Fixes
+- Buyer/seller messaging center
+- Buyer can message seller from product page
+- Seller Dashboard has Messages tab
+- Buyer Dashboard has Messages tab
+- Follow Seller button
+- Buyer Dashboard shows followed sellers
+- Seller public profiles show follower counts
+- Community badges for sellers
+- Verified seller style display
+- Admin Community Tools tab
+- Admin can assign badges
+- Admin can turn seller profile into Seller Spotlight culture post
+- Store announcements
+- Seller events/drops calendar
+- Product gallery images
+- Product gallery management in Seller Dashboard
+- Product pages show gallery images
 
-- Friendly duplicate buyer email message
-- Friendly duplicate seller email message
-- Buyer Dashboard added
-- Buyer profile and buyer history
-- Buyer favorites/watchlist
-- Buyer rating/status visible
-- Seller application confirmation improved
-- Request to Buy wording instead of Buy Now Request
-- Buyer agreement checkbox before purchase request
-- Report Seller feature
-- Seller sees buyer rating/status on orders
-- Seller can update order status
-- Seller can mark buyer as non-paying
-- Seller policy templates
-- Auction eligibility progress display
-- Admin dashboard alerts
-- Admin Platform Rules tab
-- Admin Testing Cleanup tools
-- Expanded reports and business summary
-- Updated business planning files
+## Notes
 
-## Admin Password
-
-Set Streamlit Secrets:
-
-```toml
-ADMIN_PASSWORD = "your-private-password"
-```
+Real email and real direct push notifications still need production services later.

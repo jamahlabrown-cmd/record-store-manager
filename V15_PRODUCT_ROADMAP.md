@@ -1,37 +1,24 @@
-# House Of Wax Product Roadmap
+# Product Roadmap
 
-## V15.4 Completed
+## V15.6 Completed
 
-- Stable clean app version
-- Buyer Dashboard
-- Buyer accountability
-- Seller order controls
-- Seller non-paying buyer tool
-- Friendly duplicate email messages
-- Buyer policy agreement checkbox
-- Report Seller feature
-- Admin cleanup tools
-- Admin platform rules
-- Auction eligibility progress
-- Updated business planning documents
+- Messaging center
+- Seller follows
+- Seller badges
+- Verified seller display
+- Seller spotlight culture posts
+- Store announcements
+- Events/drops calendar
+- Product galleries
 
-## V15.5 Recommended
+## V15.7 Suggested
 
-- Better public seller store pages
-- Better product gallery/media upload
-- Buyer/seller feedback form
-- More complete dispute center
-- Order messages
-- Auction winner workflow
-- Import products by CSV
-- Export seller reports
-
-## Production Build
-
+- Real outgoing email
 - Real authentication
-- Stripe Connect seller payouts
-- Cloud media storage
-- Mobile-first marketplace design
-- Real checkout
-- Notifications/email
-- Moderation tooling
+- Better image hosting/cloud storage
+- Full conversation threads instead of message rows
+- Seller profile design polish
+- Product gallery carousel
+- Offer/counteroffer workflow
+- Checkout/payment planning
+- Feedback moderation
