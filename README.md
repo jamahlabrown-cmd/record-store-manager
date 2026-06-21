@@ -1,32 +1,31 @@
-# House Of Wax V15.8.1 Barcode + Public Trust Verified
+# House Of Wax V15.8.2 No Buyer Blocker Fix
 
-This rebuild starts from the last working V15.7.1 base and carefully adds barcode inventory and public feedback.
+This patch removes the repeated testing blocker:
+
+`Buyer not found. Use Test Setup`
 
 You should see:
 
-`Running V15.8.1 BARCODE + PUBLIC TRUST VERIFIED`
+`Running V15.8.2 NO BUYER BLOCKER FIX`
 
-## Added and verified in code
+## Fixed
 
-- Barcode / UPC / EAN on normal product upload
-- Catalog number on normal product upload
-- Matrix / runout on normal product upload
-- Label / brand on normal product upload
-- Release year on normal product upload
-- Dedicated Seller Dashboard Barcode Scanner tab
-- Barcode scanner quick-add inventory workflow
-- Bulk import supports barcode/catalog/matrix/label/year
-- Product pages publicly show barcode/catalog/matrix/label/year
-- Seller profiles publicly show seller feedback
-- Buyer Dashboard publicly shows buyer feedback received
-- Seller Orders tab shows buyer public trust profile
-- Sellers can publicly rate buyers after completed orders
-- Buyers can publicly rate sellers after completed orders
+- Buyer Dashboard no longer fails just because an exact email is missing.
+- Buyer Dashboard lets you choose an existing buyer.
+- Buyer Dashboard can create/open a buyer by email instantly.
+- If no buyer exists, the app creates a demo buyer automatically.
+- Buyer pickers throughout the app no longer block the flow.
+- The old “Buyer not found. Use Test Setup” message was removed.
 
-## Testing credentials
+## Demo Buyer
 
-Buyer: `buyer@test.com`
+`buyer@test.com`
 
-Seller: `seller@test.com`
+## What to test
 
-Seller code: `test123`
+1. Go to Buyer Dashboard.
+2. Choose existing buyer or create/open by email.
+3. Go to Marketplace.
+4. Open a product.
+5. Submit Request to Buy.
+6. Confirm it does not block on buyer missing.

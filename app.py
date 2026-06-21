@@ -8,7 +8,7 @@ import streamlit as st
 
 st.set_page_config(page_title="House Of Wax Marketplace", page_icon="🎧", layout="wide")
 
-APP_VERSION = "V15.8.1 BARCODE + PUBLIC TRUST VERIFIED"
+APP_VERSION = "V15.8.2 NO BUYER BLOCKER FIX"
 APP_NAME = "House Of Wax"
 TEST_MODE = True
 
@@ -693,6 +693,59 @@ def barcode_lookup_from_inventory(barcode):
         return None
     return df.iloc[0]
 
+
+
+def ensure_demo_buyer():
+    """Guarantee there is at least one buyer during testing."""
+    buyers = get_table("buyers")
+    if not buyers.empty:
+        return int(buyers.iloc[0]["id"])
+    run_sql("""
+        INSERT INTO buyers (name,email,phone,city,status,rating,created_at)
+        VALUES ('Demo Buyer','buyer@test.com','1234567890','Charlotte','Trusted Buyer',100,?)
+    """, (now(),))
+    buyers = get_table("buyers")
+    return int(buyers.iloc[0]["id"])
+
+
+def create_buyer_if_missing(email, name="Test Buyer"):
+    email = safe(email).strip().lower()
+    if not email:
+        email = "buyer@test.com"
+    existing = get_df("SELECT * FROM buyers WHERE lower(email)=lower(?)", (email,))
+    if not existing.empty:
+        return int(existing.iloc[0]["id"])
+    run_sql("""
+        INSERT INTO buyers (name,email,phone,city,status,rating,created_at)
+        VALUES (?,?,?,?,?,?,?)
+    """, (name or "Test Buyer", email, "", "", "Trusted Buyer", 100, now()))
+    created = get_df("SELECT * FROM buyers WHERE lower(email)=lower(?)", (email,))
+    return int(created.iloc[0]["id"])
+
+
+def buyer_picker(label="Choose buyer", key="buyer_picker", allow_create=True):
+    buyers = get_table("buyers")
+    if buyers.empty:
+        buyer_id = ensure_demo_buyer()
+        buyers = get_table("buyers")
+    options = []
+    for _, row in buyers.iterrows():
+        options.append(f"{int(row['id'])} | {safe(row.get('name'))} | {safe(row.get('email'))} | {safe(row.get('status'))}")
+    selected = st.selectbox(label, options, key=key)
+    return int(selected.split("|")[0].strip())
+
+
+def seller_picker(label="Choose seller", key="seller_picker"):
+    sellers = get_table("sellers")
+    if sellers.empty:
+        seed_demo_data()
+        sellers = get_table("sellers")
+    options = []
+    for _, row in sellers.iterrows():
+        options.append(f"{int(row['id'])} | {safe(row.get('store_name'))} | {safe(row.get('email'))} | {safe(row.get('status'))}")
+    selected = st.selectbox(label, options, key=key)
+    return int(selected.split("|")[0].strip())
+
 # -----------------------------
 # UI helpers
 # -----------------------------
@@ -720,9 +773,11 @@ def render_header():
 def choose_buyer(key_prefix):
     buyers = get_table("buyers")
     if buyers.empty:
-        st.warning("No buyers yet. Use Test Setup or Register / Sell.")
-        return None
-    options = [f"{int(r['id'])} | {safe(r['name'])} | {safe(r['email'])} | {safe(r['status'])}" for _, r in buyers.iterrows()]
+        ensure_demo_buyer()
+        buyers = get_table("buyers")
+    options = []
+    for _, r in buyers.iterrows():
+        options.append(f"{int(r['id'])} | {safe(r.get('name'))} | {safe(r.get('email'))} | {safe(r.get('status'))}")
     selected = st.selectbox("Buyer account", options, key=f"{key_prefix}_buyer")
     return int(selected.split("|")[0].strip())
 
@@ -1079,79 +1134,98 @@ def register_page():
 def buyer_dashboard_page():
     render_header()
     st.header("Buyer Dashboard")
-    email = st.text_input("Buyer email", value="buyer@test.com")
-    if not st.button("Open Buyer Dashboard"):
-        return
-    buyer_df = get_df("SELECT * FROM buyers WHERE lower(email)=lower(?)", (email.strip(),))
-    if buyer_df.empty:
-        st.error("Buyer not found. Use Test Setup.")
-        return
-    buyer = buyer_df.iloc[0]
-    buyer_id = int(buyer["id"])
-    st.success(f"Buyer: {safe(buyer['name'])}")
-    c1, c2, c3 = st.columns(3)
+    st.info("Testing fix: this dashboard will not block you if a buyer email is missing. Pick an existing buyer or create one instantly.")
+
+    buyers = get_table("buyers")
+    if buyers.empty:
+        ensure_demo_buyer()
+        buyers = get_table("buyers")
+
+    mode = st.radio("Open buyer by", ["Choose existing buyer", "Create/open by email"], horizontal=True)
+
+    if mode == "Choose existing buyer":
+        buyer_id = buyer_picker("Buyer account", "buyer_dashboard_existing")
+    else:
+        col1, col2 = st.columns(2)
+        email = col1.text_input("Buyer email", value="buyer@test.com")
+        name = col2.text_input("Buyer name", value="Test Buyer")
+        if st.button("Create/Open Buyer Dashboard"):
+            buyer_id = create_buyer_if_missing(email, name)
+            st.session_state["active_buyer_id"] = buyer_id
+        buyer_id = st.session_state.get("active_buyer_id", ensure_demo_buyer())
+
+    buyer = get_buyer(int(buyer_id))
+    if buyer is None:
+        buyer_id = ensure_demo_buyer()
+        buyer = get_buyer(int(buyer_id))
+
+    st.success(f"Buyer loaded: {safe(buyer['name'])} | {safe(buyer['email'])}")
+
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Status", safe(buyer["status"]))
     c2.metric("Rating", f"{buyer['rating']}%")
     c3.metric("Purchases", buyer["completed_purchases"])
+    c4.metric("Unpaid Orders", buyer["unpaid_orders"])
+
     tabs = st.tabs(["Profile", "Orders", "Messages", "Favorites", "Following", "Leave Seller Feedback", "Public Feedback Received"])
+
     with tabs[0]:
         with st.form("buyer_profile"):
             name = st.text_input("Name", value=safe(buyer["name"]))
+            email = st.text_input("Email", value=safe(buyer["email"]))
             phone = st.text_input("Phone", value=safe(buyer["phone"]))
             city = st.text_input("City", value=safe(buyer["city"]))
-            submitted = st.form_submit_button("Save")
+            submitted = st.form_submit_button("Save Buyer Profile")
         if submitted:
-            run_sql("UPDATE buyers SET name=?, phone=?, city=? WHERE id=?", (name, phone, city, buyer_id))
-            st.success("Saved.")
+            try:
+                run_sql("UPDATE buyers SET name=?, email=?, phone=?, city=? WHERE id=?", (name, email, phone, city, int(buyer_id)))
+                st.success("Buyer profile saved.")
+            except Exception as e:
+                st.error("Could not save profile. That email may already belong to another buyer.")
+
     with tabs[1]:
-        orders = get_df("""
-            SELECT o.*, s.store_name, p.artist, p.title
-            FROM orders o
-            LEFT JOIN sellers s ON o.seller_id=s.id
-            LEFT JOIN products p ON o.product_id=p.id
-            WHERE o.buyer_id=? ORDER BY o.created_at DESC
-        """, (buyer_id,))
+        orders = get_df("SELECT * FROM orders WHERE buyer_id=? ORDER BY created_at DESC", (int(buyer_id),))
         st.dataframe(orders, use_container_width=True)
+
     with tabs[2]:
-        messages = get_df("""
-            SELECT m.*, s.store_name, p.artist, p.title
-            FROM messages m
-            LEFT JOIN sellers s ON m.seller_id=s.id
-            LEFT JOIN products p ON m.product_id=p.id
-            WHERE m.buyer_id=? ORDER BY m.created_at DESC
-        """, (buyer_id,))
+        messages = get_df("SELECT * FROM messages WHERE buyer_id=? ORDER BY created_at DESC", (int(buyer_id),))
         st.dataframe(messages, use_container_width=True)
+
     with tabs[3]:
-        favs = get_df("SELECT * FROM favorites WHERE buyer_id=? ORDER BY created_at DESC", (buyer_id,))
+        favs = get_df("SELECT * FROM favorites WHERE buyer_id=? ORDER BY created_at DESC", (int(buyer_id),))
         st.dataframe(favs, use_container_width=True)
+
     with tabs[4]:
-        following = get_df("SELECT f.*, s.store_name, s.rating FROM seller_followers f LEFT JOIN sellers s ON f.seller_id=s.id WHERE f.buyer_id=?", (buyer_id,))
+        following = get_df("""
+            SELECT f.*, s.store_name, s.rating, s.seller_level
+            FROM seller_followers f
+            LEFT JOIN sellers s ON f.seller_id=s.id
+            WHERE f.buyer_id=?
+            ORDER BY f.created_at DESC
+        """, (int(buyer_id),))
         st.dataframe(following, use_container_width=True)
+
     with tabs[5]:
-        completed = get_df("""
-            SELECT o.*, s.store_name, p.artist, p.title
-            FROM orders o
-            LEFT JOIN sellers s ON o.seller_id=s.id
-            LEFT JOIN products p ON o.product_id=p.id
-            WHERE o.buyer_id=? AND o.status='Completed'
-        """, (buyer_id,))
+        completed = get_df("SELECT * FROM orders WHERE buyer_id=? AND status='Completed' ORDER BY created_at DESC", (int(buyer_id),))
         st.dataframe(completed, use_container_width=True)
-        if not completed.empty:
+        if completed.empty:
+            st.info("No completed orders yet. In testing, have the seller mark an order Completed first.")
+        else:
             order_id = st.selectbox("Completed order", completed["id"].tolist())
             order = completed[completed["id"] == order_id].iloc[0]
-            st.write(f"Publicly reviewing seller: **{safe(order.get('store_name'))}**")
             rating = st.slider("Seller rating", 1, 5, 5)
-            comment = st.text_area("Public feedback comment")
-            if st.button("Submit Public Seller Feedback"):
-                existing = get_df("SELECT id FROM feedback WHERE order_id=? AND reviewer_type='Buyer' AND reviewer_id=?", (int(order_id), buyer_id))
-                if not existing.empty:
-                    st.warning("You already left seller feedback for this order.")
-                else:
-                    run_sql("INSERT INTO feedback (order_id,reviewer_type,reviewer_id,reviewee_type,reviewee_id,rating,comment,created_at) VALUES (?,'Buyer',?,'Seller',?,?,?,?)", (int(order_id), buyer_id, int(order["seller_id"]), int(rating), comment, now()))
-                    recalculate_rating("Seller", int(order["seller_id"]))
-                    st.success("Public seller feedback submitted.")
+            comment = st.text_area("Public comment")
+            if st.button("Submit Seller Feedback"):
+                run_sql("""
+                    INSERT INTO feedback (order_id,reviewer_type,reviewer_id,reviewee_type,reviewee_id,rating,comment,created_at)
+                    VALUES (?,'Buyer',?,'Seller',?,?,?,?)
+                """, (int(order_id), int(buyer_id), int(order["seller_id"]), int(rating), comment, now()))
+                recalculate_rating("Seller", int(order["seller_id"]))
+                st.success("Public seller feedback submitted.")
+
     with tabs[6]:
-        buyer_public_profile(buyer_id)
+        st.subheader("Public Feedback Visible to Everyone")
+        public_feedback_summary("Buyer", int(buyer_id))
 
 
 def seller_dashboard_page():
