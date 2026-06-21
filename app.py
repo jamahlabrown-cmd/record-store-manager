@@ -1,1308 +1,317 @@
 
 import sqlite3
-import json
 from pathlib import Path
-from datetime import date, datetime
+from datetime import datetime
 import pandas as pd
 import streamlit as st
-from urllib.parse import quote_plus, urlparse, parse_qs
-from urllib.request import Request, urlopen
 
-DB = Path("house_of_wax_v11.db")
-MEDIA_DIR = Path("house_of_wax_media")
-ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
+DB=Path('house_of_wax_v15.db')
+ADMIN_PASSWORD=st.secrets.get('ADMIN_PASSWORD','')
+APP='House Of Wax'
 
-
-def conn():
-    return sqlite3.connect(DB)
-
-
+def conn(): return sqlite3.connect(DB)
 def q(sql, params=()):
-    c = conn()
-    c.execute(sql, params)
-    c.commit()
-    c.close()
-    ensure_internet_media_schema()
-
-
-def table(name):
-    c = conn()
-    df = pd.read_sql_query(f"SELECT * FROM {name}", c)
-    c.close()
-    return df
-
-
-def get_store_setting(key, default=""):
-    try:
-        df = table("store_settings")
-        if df.empty:
-            return default
-        row = df[df.setting_key == key]
-        if row.empty:
-            return default
-        return str(row.iloc[0].setting_value or default)
-    except Exception:
-        return default
-
-def set_store_setting(key, value):
-    q("INSERT OR REPLACE INTO store_settings (setting_key, setting_value) VALUES (?, ?)", (key, str(value or "")))
-
-def get_store_settings():
-    return {
-        "store_name": get_store_setting("store_name", "House Of Wax"),
-        "tagline": get_store_setting("tagline", "Rare finds. Real records. Better digging."),
-        "announcement": get_store_setting("announcement", "New arrivals added often. Request a hold if you see something you like."),
-        "logo_url": get_store_setting("logo_url", ""),
-        "banner_url": get_store_setting("banner_url", ""),
-        "instagram_url": get_store_setting("instagram_url", ""),
-        "contact_email": get_store_setting("contact_email", ""),
-        "contact_phone": get_store_setting("contact_phone", ""),
-        "pickup_note": get_store_setting("pickup_note", "Pickup and local hold options available."),
-        "shipping_note": get_store_setting("shipping_note", "Shipping available on request."),
-        "payment_link": get_store_setting("payment_link", ""),
-    }
-
-def save_brand_file(uploaded_file, label):
-    MEDIA_DIR.mkdir(exist_ok=True)
-    ext = Path(uploaded_file.name).suffix.lower()
-    safe_name = f"branding_{label}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}{ext}"
-    path = MEDIA_DIR / safe_name
-    path.write_bytes(uploaded_file.getbuffer())
-    return str(path)
-
-def first_uploaded_picture(sku):
-    media = get_media_for_sku(sku, public_only=True)
-    if media.empty:
-        return ""
-    pics = media[media.media_type == "Picture"] if "media_type" in media.columns else media.iloc[0:0]
-    if pics.empty:
-        return ""
-    p = str(pics.iloc[0].file_path)
-    return p if Path(p).exists() else ""
-
-def first_internet_thumbnail(sku):
-    links = get_internet_media_links(sku, public_only=True)
-    if links.empty:
-        return ""
-    for _, link in links.iterrows():
-        thumb = infer_thumbnail_url(link.get("media_type", ""), link.get("source", ""), link.get("url", ""), link.get("thumbnail_url", ""))
-        if thumb:
-            return thumb
-    return ""
-
-def product_thumbnail(record):
-    uploaded = first_uploaded_picture(record.sku)
-    if uploaded:
-        return uploaded
-    internet = first_internet_thumbnail(record.sku)
-    if internet:
-        return internet
-    image_url = str(getattr(record, "image_url", "") or "").strip()
-    if image_url:
-        return image_url
-    return ""
-
-def detect_media_source(url):
-    u = str(url or "").lower()
-    if "youtube.com" in u or "youtu.be" in u:
-        return "YouTube", "Video"
-    if "discogs.com" in u:
-        return "Discogs", "Reference"
-    if "bandcamp.com" in u:
-        return "Bandcamp", "Audio"
-    if "soundcloud.com" in u:
-        return "SoundCloud", "Audio"
-    if "archive.org" in u:
-        return "Internet Archive", "Reference"
-    if any(u.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]):
-        return "Direct Image", "Picture"
-    if any(u.endswith(ext) for ext in [".mp4", ".mov", ".m4v", ".webm"]):
-        return "Direct Video", "Video"
-    if any(u.endswith(ext) for ext in [".mp3", ".wav", ".m4a", ".aac", ".ogg"]):
-        return "Direct Audio", "Audio"
-    return "Other", "Reference"
-
-def normalize_barcode(value):
-    return "".join(ch for ch in str(value or "") if ch.isdigit())
-
-def barcode_search_links(barcode, catalog_number="", artist="", title=""):
-    bc = normalize_barcode(barcode)
-    cat = quote_plus(str(catalog_number or ""))
-    text_query = quote_plus(" ".join([str(artist or ""), str(title or ""), str(catalog_number or "")]).strip())
-    links = {}
-    if bc:
-        links["Discogs barcode search"] = f"https://www.discogs.com/search/?barcode={bc}&type=release"
-        links["Discogs general UPC search"] = f"https://www.discogs.com/search/?q={bc}&type=release"
-        links["MusicBrainz barcode search"] = f"https://musicbrainz.org/search?query=barcode%3A{bc}&type=release&method=advanced"
-        links["Google UPC search"] = f"https://www.google.com/search?q={bc}+album+barcode+record"
-    if catalog_number:
-        links["Discogs catalog number search"] = f"https://www.discogs.com/search/?catno={cat}&type=release"
-        links["MusicBrainz catalog search"] = f"https://musicbrainz.org/search?query=catno%3A{cat}&type=release&method=advanced"
-    if text_query:
-        links["Artist/title fallback search"] = f"https://www.discogs.com/search/?q={text_query}&type=release"
-    return links
-
-def musicbrainz_lookup_by_barcode(barcode):
-    bc = normalize_barcode(barcode)
-    if not bc:
-        return []
-    url = f"https://musicbrainz.org/ws/2/release/?query=barcode:{bc}&fmt=json&limit=5"
-    try:
-        req = Request(url, headers={"User-Agent": "HouseOfWaxInventory/1.0 (contact: admin@houseofwax.local)"})
-        with urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        results = []
-        for rel in data.get("releases", []):
-            artist_credit = rel.get("artist-credit", [])
-            artist = "".join([a.get("name", "") if isinstance(a, dict) else str(a) for a in artist_credit]).strip()
-            labels = rel.get("label-info", []) or []
-            label = ""
-            catalog = ""
-            if labels:
-                label = ((labels[0].get("label") or {}).get("name") or "")
-                catalog = labels[0].get("catalog-number") or ""
-            media = rel.get("media", []) or []
-            fmt = media[0].get("format", "") if media else ""
-            results.append({
-                "artist": artist,
-                "title": rel.get("title", ""),
-                "release_year": str(rel.get("date", ""))[:4],
-                "label": label,
-                "catalog_number": catalog,
-                "format": fmt or "Vinyl/CD/Cassette",
-                "barcode": bc,
-                "external_release_url": "https://musicbrainz.org/release/" + rel.get("id", ""),
-                "metadata_source": "MusicBrainz barcode lookup",
-            })
-        return results
-    except Exception:
-        return []
-
-def save_purchase_request(record, request_type, name, email, phone, pickup_or_shipping, address, message):
-    q("""INSERT INTO purchase_requests
-    (request_date, sku, artist, title, request_type, customer_name, customer_email, customer_phone, pickup_or_shipping, address, message, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-    (date.today().isoformat(), record.sku, record.artist, record.title, request_type, name, email, phone, pickup_or_shipping, address, message, "New", datetime.now().isoformat(timespec="seconds")))
-
-def render_hold_form(record, key_suffix=""):
-    with st.form(f"hold_{record.sku}_{key_suffix}"):
-        c1, c2 = st.columns(2)
-        name = c1.text_input("Name")
-        email = c2.text_input("Email")
-        phone = st.text_input("Phone")
-        message = st.text_area("Message", value=f"I am interested in {record.artist} — {record.title}.")
-        submitted = st.form_submit_button("Request Hold / Ask About This Record", use_container_width=True)
-        if submitted:
-            if not name or not email:
-                st.error("Name and email are required.")
-            else:
-                q("""INSERT INTO hold_requests
-                (request_date, sku, artist, title, customer_name, customer_email, customer_phone, message, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (date.today().isoformat(), record.sku, record.artist, record.title, name, email, phone, message, "New", datetime.now().isoformat(timespec="seconds")))
-                st.success("Request sent. We will follow up soon.")
-
-def render_media_gallery(record):
-    media = get_media_for_sku(record.sku, public_only=True)
-    internet_links = get_internet_media_links(record.sku, public_only=True)
-    if media.empty and internet_links.empty:
-        return
-    st.write("### Media")
-    if not media.empty:
-        render_media_assets(media)
-    if not internet_links.empty:
-        render_internet_media_links(internet_links)
-
-def render_product_detail(record):
-    st.button("← Back to all records", key="back_to_records", on_click=lambda: st.session_state.update({"selected_sku": ""}))
-    c1, c2 = st.columns([1, 1.2])
-    with c1:
-        thumb = product_thumbnail(record)
-        if thumb:
-            st.image(thumb, use_container_width=True)
-        render_media_gallery(record)
-    with c2:
-        st.header(f"{record.artist} — {record.title}")
-        st.caption("House Of Wax inventory" if record.owner_type == "Store" else f"House Of Wax seller #{int(record.seller_id)}")
-        st.markdown(f"## {money(record.price)}")
-        st.write(f"**Format:** {record.format}")
-        st.write(f"**Genre:** {record.genre}")
-        st.write(f"**Condition:** {record.condition}")
-        st.write(f"**Year:** {record.release_year}")
-        if str(getattr(record, "catalog_number", "") or "").strip():
-            st.write(f"**Catalog #:** {record.catalog_number}")
-        if str(getattr(record, "barcode", "") or "").strip():
-            st.write(f"**Barcode/UPC:** {record.barcode}")
-        st.write(f"**Available:** {int(record.quantity)}")
-        if str(record.bio or "").strip():
-            st.write(record.bio)
-        settings = get_store_settings()
-        if settings.get("payment_link"):
-            st.link_button("Pay / Checkout Link", settings["payment_link"], use_container_width=True)
-        st.caption(settings.get("pickup_note", ""))
-        st.caption(settings.get("shipping_note", ""))
-        st.divider()
-        render_hold_form(record, key_suffix="detail")
-
-def render_product_card(record):
-    with st.container(border=True):
-        thumb = product_thumbnail(record)
-        if thumb:
-            st.image(thumb, use_container_width=True)
-        else:
-            st.markdown("### 🎵")
-        st.markdown(f"**{record.artist} — {record.title}**")
-        st.caption(f"{record.format} • {record.genre} • {record.condition}")
-        st.markdown(f"### {money(record.price)}")
-        if st.button("View / Reserve", key=f"view_{record.sku}", use_container_width=True):
-            st.session_state.selected_sku = record.sku
-            st.rerun()
-
-def ensure_house_of_wax_schema():
-    c = conn()
-    cur = c.cursor()
-    try:
-        inv_cols = [row[1] for row in cur.execute("PRAGMA table_info(inventory)").fetchall()]
-        for col in ["catalog_number", "matrix_runout", "external_release_url", "metadata_source"]:
-            if col not in inv_cols:
-                cur.execute(f"ALTER TABLE inventory ADD COLUMN {col} TEXT")
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS purchase_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            request_date TEXT,
-            sku TEXT,
-            artist TEXT,
-            title TEXT,
-            request_type TEXT,
-            customer_name TEXT,
-            customer_email TEXT,
-            customer_phone TEXT,
-            pickup_or_shipping TEXT,
-            address TEXT,
-            message TEXT,
-            status TEXT DEFAULT 'New',
-            created_at TEXT
-        )
-        """)
-        c.commit()
-    except Exception:
-        pass
-    c.close()
-
-def ensure_internet_media_schema():
-    c = conn()
-    cur = c.cursor()
-    try:
-        cols = [row[1] for row in cur.execute("PRAGMA table_info(internet_media_links)").fetchall()]
-        if "thumbnail_url" not in cols:
-            cur.execute("ALTER TABLE internet_media_links ADD COLUMN thumbnail_url TEXT")
-            c.commit()
-    except Exception:
-        pass
-    c.close()
+    c=conn(); c.execute(sql, params); c.commit(); c.close()
+def df(sql, params=()):
+    c=conn(); d=pd.read_sql_query(sql,c,params=params); c.close(); return d
+def table(t): return df(f'SELECT * FROM {t}')
+def now(): return datetime.now().isoformat(timespec='seconds')
+def money(x):
+    try: return f'${float(x):,.2f}'
+    except: return '$0.00'
 
 def setup():
-    MEDIA_DIR.mkdir(exist_ok=True)
-    c = conn()
-    cur = c.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS inventory (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sku TEXT UNIQUE,
-        barcode TEXT,
-        catalog_number TEXT,
-        matrix_runout TEXT,
-        external_release_url TEXT,
-        metadata_source TEXT,
-        artist TEXT NOT NULL,
-        title TEXT NOT NULL,
-        format TEXT DEFAULT 'Vinyl',
-        genre TEXT,
-        condition TEXT,
-        label TEXT,
-        release_year TEXT,
-        pressing_notes TEXT,
-        cost REAL DEFAULT 0,
-        price REAL DEFAULT 0,
-        quantity INTEGER DEFAULT 0,
-        reorder_level INTEGER DEFAULT 2,
-        location TEXT,
-        bio TEXT,
-        caption TEXT,
-        hashtags TEXT,
-        image_url TEXT,
-        public_visible TEXT DEFAULT 'Yes',
-        owner_type TEXT DEFAULT 'Store',
-        seller_id INTEGER DEFAULT 0,
-        commission_rate REAL DEFAULT 0,
-        listing_fee REAL DEFAULT 0,
-        listing_status TEXT DEFAULT 'Active',
-        updated_at TEXT
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS media_assets (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sku TEXT NOT NULL,
-        media_type TEXT NOT NULL,
-        file_name TEXT NOT NULL,
-        file_path TEXT NOT NULL,
-        public_visible TEXT DEFAULT 'Yes',
-        caption TEXT,
-        uploaded_at TEXT
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS internet_media_links (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sku TEXT NOT NULL,
-        source TEXT,
-        media_type TEXT,
-        title TEXT,
-        url TEXT NOT NULL,
-        public_visible TEXT DEFAULT 'Yes',
-        notes TEXT,
-        thumbnail_url TEXT,
-        saved_at TEXT
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS store_settings (
-        setting_key TEXT PRIMARY KEY,
-        setting_value TEXT
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS sellers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        store_name TEXT NOT NULL,
-        seller_name TEXT,
-        email TEXT UNIQUE,
-        phone TEXT,
-        commission_rate REAL DEFAULT 10,
-        monthly_fee REAL DEFAULT 0,
-        status TEXT DEFAULT 'Pending',
-        created_at TEXT
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_date TEXT,
-        sku TEXT,
-        seller_id INTEGER,
-        sale_price REAL,
-        platform_fee REAL,
-        seller_payout REAL,
-        buyer_name TEXT,
-        buyer_email TEXT,
-        status TEXT DEFAULT 'New',
-        created_at TEXT
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS expenses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        expense_date TEXT,
-        category TEXT,
-        vendor TEXT,
-        description TEXT,
-        amount REAL,
-        created_at TEXT
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS purchase_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        request_date TEXT,
-        sku TEXT,
-        artist TEXT,
-        title TEXT,
-        request_type TEXT,
-        customer_name TEXT,
-        customer_email TEXT,
-        customer_phone TEXT,
-        pickup_or_shipping TEXT,
-        address TEXT,
-        message TEXT,
-        status TEXT DEFAULT 'New',
-        created_at TEXT
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS hold_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        request_date TEXT,
-        sku TEXT,
-        artist TEXT,
-        title TEXT,
-        customer_name TEXT,
-        customer_email TEXT,
-        customer_phone TEXT,
-        message TEXT,
-        status TEXT DEFAULT 'New',
-        created_at TEXT
-    )
-    """)
-    c.commit()
-    c.close()
-    ensure_house_of_wax_schema()
-
-
-def money(x):
-    try:
-        return f"${float(x):,.2f}"
-    except Exception:
-        return "$0.00"
-
-
-def s(v):
-    if pd.isna(v):
-        return ""
-    return str(v).strip()
-
-
-def sku_for(artist, title, barcode=""):
-    if barcode:
-        return "BC-" + barcode[-8:]
-    return (artist[:3] + "-" + title[:5] + "-" + str(int(datetime.now().timestamp()))[-5:]).upper().replace(" ", "")
-
-
-def bio(row):
-    artist = s(row.get("artist", ""))
-    title = s(row.get("title", ""))
-    genre = s(row.get("genre", ""))
-    fmt = s(row.get("format", "Vinyl")) or "record"
-    condition = s(row.get("condition", ""))
-    year = s(row.get("release_year", ""))
-    label = s(row.get("label", ""))
-    pressing = s(row.get("pressing_notes", ""))
-    catalog = s(row.get("catalog_number", ""))
-    barcode = s(row.get("barcode", ""))
-
-    parts = []
-    opening = f"{artist} — {title}" if artist and title else title or artist or "This release"
-    if year:
-        opening += f" ({year})"
-    opening += f" is a strong {fmt.lower()} listing for listeners, collectors, and anyone building a deeper music library."
-    if genre:
-        opening += f" The sound sits in the {genre} lane, making it a useful pick for both everyday listening and focused digging."
-    parts.append(opening)
-
-    detail = ""
-    if label:
-        detail += f" Released on {label},"
-    else:
-        detail += " This copy"
-    if condition:
-        detail += f" is listed in {condition} condition"
-    else:
-        detail += " is ready for review"
-    if pressing:
-        detail += f" with notes that may matter to buyers: {pressing}"
-    if catalog:
-        detail += f". Catalog number: {catalog}"
-    if barcode:
-        detail += f". Barcode/UPC: {barcode}"
-    detail += "."
-    parts.append(detail)
-
-    parts.append("House Of Wax recommends checking the photos, media previews, and condition notes before requesting a hold or purchase. If this is a rare pressing, limited issue, import, clean used copy, or hard-to-find format, those details can make the listing more valuable and easier for the right buyer to find.")
-    return " ".join(parts)
-
-
-def caption(row):
-    artist, title, genre = s(row.get("artist","")), s(row.get("title","")), s(row.get("genre",""))
-    price = row.get("price", 0)
-    txt = f"Now in stock: {artist} — {title}."
-    if genre:
-        txt += f" A great {genre} pick."
-    try:
-        if float(price) > 0:
-            txt += f" Priced at ${float(price):.2f}."
-    except Exception:
-        pass
-    return txt + " Message us or stop by before it is gone."
-
-
-def tags(row):
-    genre = s(row.get("genre","")).replace(" ","")
-    artist = s(row.get("artist","")).replace(" ","")
-    out = ["#HouseOfWax", "#RecordStore", "#VinylCommunity", "#NowSpinning", "#CrateDigging"]
-    if genre:
-        out.append("#" + genre)
-    if artist and len(artist) < 25:
-        out.append("#" + artist)
-    return " ".join(out)
-
-
-def save_inventory(row):
-    row = {str(k).lower().strip(): v for k, v in row.items()}
-    artist, title, barcode = s(row.get("artist","")), s(row.get("title","")), s(row.get("barcode",""))
-    sku = s(row.get("sku","")) or sku_for(artist, title, barcode)
-    data = {
-        "sku": sku,
-        "barcode": barcode,
-        "catalog_number": s(row.get("catalog_number", "")) or s(row.get("catno", "")) or s(row.get("catalog", "")),
-        "matrix_runout": s(row.get("matrix_runout", "")) or s(row.get("matrix", "")) or s(row.get("runout", "")),
-        "external_release_url": s(row.get("external_release_url", "")) or s(row.get("discogs_url", "")) or s(row.get("musicbrainz_url", "")),
-        "metadata_source": s(row.get("metadata_source", "")),
-        "artist": artist,
-        "title": title,
-        "format": s(row.get("format","Vinyl")) or "Vinyl",
-        "genre": s(row.get("genre","")),
-        "condition": s(row.get("condition","")),
-        "label": s(row.get("label","")),
-        "release_year": s(row.get("release_year","")),
-        "pressing_notes": s(row.get("pressing_notes","")),
-        "cost": float(row.get("cost",0) or 0),
-        "price": float(row.get("price",0) or 0),
-        "quantity": int(float(row.get("quantity",0) or 0)),
-        "reorder_level": int(float(row.get("reorder_level",2) or 2)),
-        "location": s(row.get("location","")),
-        "bio": s(row.get("bio","")),
-        "caption": s(row.get("caption","")) or s(row.get("social_caption","")),
-        "hashtags": s(row.get("hashtags","")),
-        "image_url": s(row.get("image_url","")),
-        "public_visible": s(row.get("public_visible","Yes")) or "Yes",
-        "owner_type": s(row.get("owner_type","Store")) or "Store",
-        "seller_id": int(float(row.get("seller_id",0) or 0)),
-        "commission_rate": float(row.get("commission_rate",0) or 0),
-        "listing_fee": float(row.get("listing_fee",0) or 0),
-        "listing_status": s(row.get("listing_status","Active")) or "Active",
-        "updated_at": datetime.now().isoformat(timespec="seconds")
-    }
-    if not data["bio"]:
-        data["bio"] = bio(data)
-    if not data["caption"]:
-        data["caption"] = caption(data)
-    if not data["hashtags"]:
-        data["hashtags"] = tags(data)
-
-    c = conn()
-    c.execute("""
-    INSERT INTO inventory
-    (sku, barcode, catalog_number, matrix_runout, external_release_url, metadata_source, artist, title, format, genre, condition, label, release_year, pressing_notes,
-    cost, price, quantity, reorder_level, location, bio, caption, hashtags, image_url, public_visible,
-    owner_type, seller_id, commission_rate, listing_fee, listing_status, updated_at)
-    VALUES
-    (:sku, :barcode, :catalog_number, :matrix_runout, :external_release_url, :metadata_source, :artist, :title, :format, :genre, :condition, :label, :release_year, :pressing_notes,
-    :cost, :price, :quantity, :reorder_level, :location, :bio, :caption, :hashtags, :image_url, :public_visible,
-    :owner_type, :seller_id, :commission_rate, :listing_fee, :listing_status, :updated_at)
-    ON CONFLICT(sku) DO UPDATE SET
-    barcode=excluded.barcode, catalog_number=excluded.catalog_number, matrix_runout=excluded.matrix_runout, external_release_url=excluded.external_release_url, metadata_source=excluded.metadata_source, artist=excluded.artist, title=excluded.title, format=excluded.format,
-    genre=excluded.genre, condition=excluded.condition, label=excluded.label, release_year=excluded.release_year,
-    pressing_notes=excluded.pressing_notes, cost=excluded.cost, price=excluded.price, quantity=excluded.quantity,
-    reorder_level=excluded.reorder_level, location=excluded.location, bio=excluded.bio, caption=excluded.caption,
-    hashtags=excluded.hashtags, image_url=excluded.image_url, public_visible=excluded.public_visible,
-    owner_type=excluded.owner_type, seller_id=excluded.seller_id, commission_rate=excluded.commission_rate,
-    listing_fee=excluded.listing_fee, listing_status=excluded.listing_status, updated_at=excluded.updated_at
-    """, data)
-    c.commit()
-    c.close()
-
-
-
-def extract_youtube_id(url):
-    try:
-        parsed = urlparse(str(url))
-        host = parsed.netloc.lower()
-        if "youtu.be" in host:
-            return parsed.path.strip("/")
-        if "youtube.com" in host:
-            if parsed.path == "/watch":
-                return parse_qs(parsed.query).get("v", [None])[0]
-            if parsed.path.startswith("/shorts/"):
-                return parsed.path.split("/shorts/")[-1].split("/")[0]
-            if parsed.path.startswith("/embed/"):
-                return parsed.path.split("/embed/")[-1].split("/")[0]
-    except Exception:
-        return None
-    return None
-
-def infer_thumbnail_url(media_type, source, url, saved_thumb=""):
-    saved_thumb = str(saved_thumb or "").strip()
-    if saved_thumb:
-        return saved_thumb
-    url = str(url or "").strip()
-    media_type = str(media_type or "")
-    source = str(source or "")
-    lower = url.lower()
-    if media_type == "Picture":
-        if any(lower.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]):
-            return url
-    if media_type == "Video":
-        yt_id = extract_youtube_id(url)
-        if yt_id:
-            return f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg"
-    return ""
-
-def render_internet_media_card(link):
-    label = str(link.get("title", "") or link.get("url", "Media link"))
-    media_type = str(link.get("media_type", "") or "Media")
-    source = str(link.get("source", "") or "Internet")
-    notes = str(link.get("notes", "") or "")
-    url = str(link.get("url", "") or "")
-    thumb = infer_thumbnail_url(media_type, source, url, link.get("thumbnail_url", ""))
-
-    with st.container(border=True):
-        st.markdown(f"**{media_type} — {source}**")
-        if media_type == "Picture":
-            if thumb:
-                st.image(thumb, caption=label, use_container_width=True)
-            st.link_button(f"Open {label}", url)
-        elif media_type == "Video":
-            yt_id = extract_youtube_id(url)
-            if yt_id:
-                st.image(f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg", caption=label, use_container_width=True)
-            elif thumb:
-                st.image(thumb, caption=label, use_container_width=True)
-            elif url.lower().endswith((".mp4", ".mov", ".m4v", ".webm")):
-                st.video(url)
-            st.link_button(f"Watch {label}", url)
-        elif media_type == "Audio":
-            if url.lower().endswith((".mp3", ".wav", ".m4a", ".aac", ".ogg")):
-                st.audio(url)
-            st.link_button(f"Listen to {label}", url)
-        else:
-            if thumb:
-                st.image(thumb, caption=label, use_container_width=True)
-            st.link_button(f"Open {label}", url)
-        if notes:
-            st.caption(notes)
-
-def build_media_search_links(artist, title, label="", year=""):
-    base_query = " ".join([str(artist or ""), str(title or ""), str(label or ""), str(year or ""), "vinyl record"]).strip()
-    qv = quote_plus(base_query)
-    image_q = quote_plus(base_query + " album cover record")
-    audio_q = quote_plus(str(artist or "") + " " + str(title or "") + " audio")
-    video_q = quote_plus(str(artist or "") + " " + str(title or "") + " vinyl")
-    return {
-        "Discogs Release Search": f"https://www.discogs.com/search/?q={qv}&type=all",
-        "Google Images": f"https://www.google.com/search?tbm=isch&q={image_q}",
-        "YouTube": f"https://www.youtube.com/results?search_query={video_q}",
-        "Internet Archive": f"https://archive.org/search?query={qv}",
-        "Bandcamp": f"https://bandcamp.com/search?q={audio_q}",
-        "SoundCloud": f"https://soundcloud.com/search?q={audio_q}",
-        "General Web Search": f"https://www.google.com/search?q={qv}",
-    }
-
-def save_internet_media_link(sku, source, media_type, title, url, public_visible="Yes", notes="", thumbnail_url=""):
-    q("""
-    INSERT INTO internet_media_links
-    (sku, source, media_type, title, url, public_visible, notes, thumbnail_url, saved_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        sku, source, media_type, title, url, public_visible, notes, thumbnail_url,
-        datetime.now().isoformat(timespec="seconds")
-    ))
-
-def get_internet_media_links(sku, public_only=False):
-    c = conn()
-    if public_only:
-        df = pd.read_sql_query(
-            "SELECT * FROM internet_media_links WHERE sku = ? AND public_visible = 'Yes' ORDER BY saved_at DESC",
-            c,
-            params=(sku,)
-        )
-    else:
-        df = pd.read_sql_query(
-            "SELECT * FROM internet_media_links WHERE sku = ? ORDER BY saved_at DESC",
-            c,
-            params=(sku,)
-        )
-    c.close()
-    return df
-
-def delete_internet_media_link(link_id):
-    q("DELETE FROM internet_media_links WHERE id = ?", (int(link_id),))
-
-def render_internet_media_links(link_df):
-    if link_df.empty:
-        return
-    cols = st.columns(2)
-    for idx, (_, link) in enumerate(link_df.iterrows()):
-        with cols[idx % 2]:
-            render_internet_media_card(link)
-
-
-def save_media_file(sku, uploaded_file, media_type, public_visible="Yes", caption_text=""):
-    MEDIA_DIR.mkdir(exist_ok=True)
-    safe_sku = "".join([ch for ch in str(sku) if ch.isalnum() or ch in ("-", "_")]) or "unknown"
-    ext = Path(uploaded_file.name).suffix.lower()
-    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    safe_name = f"{safe_sku}_{media_type}_{stamp}{ext}"
-    path = MEDIA_DIR / safe_name
-    path.write_bytes(uploaded_file.getbuffer())
-    q("""
-    INSERT INTO media_assets
-    (sku, media_type, file_name, file_path, public_visible, caption, uploaded_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (sku, media_type, uploaded_file.name, str(path), public_visible, caption_text, datetime.now().isoformat(timespec="seconds")))
-
-
-def get_media_for_sku(sku, public_only=False):
-    c = conn()
-    if public_only:
-        df = pd.read_sql_query("SELECT * FROM media_assets WHERE sku = ? AND public_visible = 'Yes' ORDER BY uploaded_at DESC", c, params=(sku,))
-    else:
-        df = pd.read_sql_query("SELECT * FROM media_assets WHERE sku = ? ORDER BY uploaded_at DESC", c, params=(sku,))
-    c.close()
-    return df
-
-
-def render_media_assets(media_df):
-    if media_df.empty:
-        return
-    for _, m in media_df.iterrows():
-        path = str(m.get("file_path", ""))
-        cap = str(m.get("caption", "") or "")
-        if not Path(path).exists():
-            st.warning(f"Media file missing: {m.get('file_name', '')}")
-            continue
-        if m["media_type"] == "Picture":
-            st.image(path, caption=cap or m.get("file_name", ""), use_container_width=True)
-        elif m["media_type"] == "Audio":
-            if cap:
-                st.caption(cap)
-            st.audio(path)
-        elif m["media_type"] == "Video":
-            if cap:
-                st.caption(cap)
-            st.video(path)
-
-
-def delete_media_asset(media_id):
-    assets = table("media_assets")
-    row = assets[assets["id"] == int(media_id)] if not assets.empty else assets
-    if not row.empty:
-        file_path = Path(str(row.iloc[0]["file_path"]))
-        if file_path.exists():
-            try:
-                file_path.unlink()
-            except Exception:
-                pass
-    q("DELETE FROM media_assets WHERE id = ?", (int(media_id),))
-
-
-def apply_storefront_css():
-    st.markdown("""
-    <style>
-    .block-container {padding-top: 1.5rem;}
-    div[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 18px; box-shadow: 0 2px 14px rgba(0,0,0,0.06);}
-    .how-hero {padding: 22px 26px; border-radius: 22px; background: linear-gradient(135deg, #111 0%, #3b2f2f 55%, #8a6f3d 100%); color: white; margin-bottom: 18px;}
-    .how-hero h1 {margin-bottom: 4px;}
-    .how-announcement {padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.12); margin-top: 12px;}
-    </style>
-    """, unsafe_allow_html=True)
-
+    c=conn(); cur=c.cursor()
+    cur.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
+    cur.execute('''CREATE TABLE IF NOT EXISTS buyers (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,email TEXT UNIQUE,phone TEXT,city TEXT,status TEXT DEFAULT 'New Buyer',rating REAL DEFAULT 100,completed_purchases INTEGER DEFAULT 0,unpaid_orders INTEGER DEFAULT 0,disputes INTEGER DEFAULT 0,strikes INTEGER DEFAULT 0,created_at TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS sellers (id INTEGER PRIMARY KEY AUTOINCREMENT,store_name TEXT NOT NULL,owner_name TEXT,email TEXT UNIQUE,phone TEXT,city TEXT,store_bio TEXT,logo_url TEXT,banner_url TEXT,status TEXT DEFAULT 'Pending',seller_level TEXT DEFAULT 'Starter Seller',rating REAL DEFAULT 100,completed_sales INTEGER DEFAULT 0,disputes INTEGER DEFAULT 0,strikes INTEGER DEFAULT 0,auction_override TEXT DEFAULT 'No',access_code TEXT,created_at TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS seller_policies (seller_id INTEGER PRIMARY KEY,shipping_policy TEXT,return_policy TEXT,grading_policy TEXT,customer_service_policy TEXT,bundle_policy TEXT,auction_policy TEXT,buyer_requirements TEXT,local_pickup_policy TEXT,international_shipping_policy TEXT,processing_time TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT,seller_id INTEGER,sku TEXT,barcode TEXT,catalog_number TEXT,matrix_runout TEXT,category TEXT,artist TEXT,title TEXT,format TEXT,label TEXT,release_year TEXT,genre TEXT,media_grade TEXT,sleeve_grade TEXT,condition_notes TEXT,description TEXT,price REAL DEFAULT 0,quantity INTEGER DEFAULT 1,shipping_price REAL DEFAULT 0,image_url TEXT,video_url TEXT,audio_url TEXT,external_release_url TEXT,listing_status TEXT DEFAULT 'Active',listing_type TEXT DEFAULT 'Fixed Price',created_at TEXT,updated_at TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,seller_id INTEGER,buyer_id INTEGER,order_type TEXT,status TEXT DEFAULT 'New',item_price REAL DEFAULT 0,shipping_price REAL DEFAULT 0,platform_fee REAL DEFAULT 0,seller_payout REAL DEFAULT 0,buyer_message TEXT,created_at TEXT,updated_at TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS listing_flags (id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,seller_id INTEGER,buyer_id INTEGER,reason TEXT,details TEXT,status TEXT DEFAULT 'Open',admin_notes TEXT,created_at TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS auctions (id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,seller_id INTEGER,auction_title TEXT,starting_bid REAL DEFAULT 0,reserve_price REAL DEFAULT 0,buy_now_price REAL DEFAULT 0,bid_increment REAL DEFAULT 1,start_time TEXT,end_time TEXT,status TEXT DEFAULT 'Draft',notes TEXT,created_at TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS bids (id INTEGER PRIMARY KEY AUTOINCREMENT,auction_id INTEGER,buyer_id INTEGER,bid_amount REAL,bid_time TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS disputes (id INTEGER PRIMARY KEY AUTOINCREMENT,order_id INTEGER,product_id INTEGER,seller_id INTEGER,buyer_id INTEGER,opened_by TEXT,reason TEXT,details TEXT,status TEXT DEFAULT 'Open',resolution TEXT,created_at TEXT,updated_at TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT,order_id INTEGER,reviewer_type TEXT,reviewer_id INTEGER,reviewee_type TEXT,reviewee_id INTEGER,rating INTEGER,comment TEXT,created_at TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS culture_posts (id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT,category TEXT,author TEXT,body TEXT,image_url TEXT,status TEXT DEFAULT 'Published',created_at TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS social_posts (id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,seller_id INTEGER,platform TEXT,caption TEXT,hashtags TEXT,status TEXT DEFAULT 'Draft',created_at TEXT,posted_at TEXT)''')
+    c.commit(); c.close()
+    defaults={'platform_commission_percent':'9','auction_commission_percent':'10','auction_min_completed_sales':'10','auction_min_rating':'90','site_tagline':'A seller-powered marketplace for records, clothing, music culture, and collectors.','announcement':'Sellers run their own stores. Buyers and sellers are both accountable. Auctions are earned.','logo_url':'','buyer_payment_window_hours':'48','default_processing_time':'3 business days'}
+    for k,v in defaults.items():
+        if df('SELECT * FROM settings WHERE key=?',(k,)).empty: q('INSERT INTO settings VALUES (?,?)',(k,v))
 setup()
-st.set_page_config(page_title="House Of Wax", layout="wide")
-st.sidebar.title("House Of Wax")
-mode = st.sidebar.radio("Choose view", ["Public Storefront", "Seller Storefronts", "Admin Login"])
 
-if mode == "Public Storefront":
-    apply_storefront_css()
-    settings = get_store_settings()
-    if settings["logo_url"]:
-        try:
-            st.sidebar.image(settings["logo_url"], use_container_width=True)
-        except Exception:
-            pass
-    st.markdown(f"""
-    <div class="how-hero">
-        <h1>{settings['store_name']}</h1>
-        <div>{settings['tagline']}</div>
-        <div class="how-announcement">{settings['announcement']}</div>
-    </div>
-    """, unsafe_allow_html=True)
-    if settings["banner_url"]:
-        st.image(settings["banner_url"], use_container_width=True)
+def setting(k,d=''):
+    r=df('SELECT value FROM settings WHERE key=?',(k,)); return d if r.empty else str(r.iloc[0].value)
+def set_setting(k,v): q('INSERT OR REPLACE INTO settings VALUES (?,?)',(k,str(v)))
+def fee(total,auction=False): return round(float(total)*float(setting('auction_commission_percent' if auction else 'platform_commission_percent','9'))/100,2)
+def desc(p):
+    ids=[]
+    for k,n in [('barcode','barcode'),('catalog_number','catalog #'),('matrix_runout','matrix/runout')]:
+        if p.get(k): ids.append(f"{n} {p.get(k)}")
+    return f"{p.get('artist','')} — {p.get('title','')} is a curated {p.get('format','item')} listing from an independent House Of Wax seller. Genre/style: {p.get('genre','not specified')}. Condition: media/product {p.get('media_grade','N/A')} and sleeve/packaging {p.get('sleeve_grade','N/A')}. {'Identifiers: '+', '.join(ids)+'.' if ids else ''} Seller notes: {p.get('condition_notes','')}. Buyers should review all photos, descriptions, seller policies, and shipping terms before purchasing or bidding."
+def quality(p):
+    checks=[float(p.get('price') or 0)>0,bool(p.get('image_url') or p.get('video_url') or p.get('audio_url')),bool(p.get('media_grade') or p.get('condition_notes')),bool(p.get('description') and len(str(p.get('description'))>120)),bool(p.get('barcode') or p.get('catalog_number') or p.get('matrix_runout')),bool(p.get('category')),p.get('listing_status')=='Active']
+    return int(sum(checks)/len(checks)*100)
+def seller_row(sid):
+    r=df('SELECT * FROM sellers WHERE id=?',(sid,)); return None if r.empty else r.iloc[0]
+def auction_ok(s):
+    if s is None: return False,'Seller not found.'
+    if s.status!='Approved': return False,'Seller must be approved first.'
+    if s.auction_override=='Yes': return True,'Auction access manually approved by House Of Wax.'
+    if int(s.completed_sales or 0)<int(float(setting('auction_min_completed_sales','10'))): return False,'Seller needs more completed sales.'
+    if float(s.rating or 0)<float(setting('auction_min_rating','90')): return False,'Seller rating is too low.'
+    if int(s.disputes or 0)>0 or int(s.strikes or 0)>0: return False,'Seller needs a clean dispute/strike record or admin override.'
+    return True,'Seller qualifies for auctions.'
+def buyer_ok(b):
+    if b is None: return False,'Buyer must register first.'
+    if b.status in ['Restricted Buyer','Suspended Buyer']: return False,'Buyer account is restricted.'
+    if int(b.unpaid_orders or 0)>=3: return False,'Buyer has too many unpaid orders.'
+    return True,'Buyer may purchase/bid.'
 
-    inv = table("inventory")
-    if inv.empty:
-        st.info("No public inventory yet.")
+def header():
+    c1,c2=st.columns([1,5])
+    logo=setting('logo_url')
+    with c1: st.image(logo,use_container_width=True) if logo else st.markdown('## 🎧')
+    with c2: st.title(APP); st.caption(setting('site_tagline'))
+    if setting('announcement'): st.info(setting('announcement'))
+
+def product_card(p):
+    with st.container(border=True):
+        if p.get('image_url'): st.image(p.image_url,use_container_width=True)
+        elif p.get('video_url'): st.video(p.video_url)
+        else: st.markdown('### 🎵')
+        st.subheader(f"{p.get('artist','')} — {p.get('title','')}")
+        st.caption(f"{p.get('format','')} • {p.get('category','')} • {p.get('media_grade','')}")
+        st.write(f"**{money(p.get('price'))}** + shipping {money(p.get('shipping_price'))}")
+        st.progress(quality(p)/100,text=f"Listing quality {quality(p)}/100")
+        if st.button('View Item',key=f'view{p.id}'):
+            st.session_state.product=int(p.id); st.rerun()
+
+def product_detail(p):
+    if st.button('← Back'): st.session_state.pop('product',None); st.rerun()
+    s=seller_row(int(p.seller_id))
+    c1,c2=st.columns([1.2,1])
+    with c1:
+        if p.get('image_url'): st.image(p.image_url,use_container_width=True)
+        if p.get('video_url'): st.video(p.video_url)
+        if p.get('audio_url'): st.audio(p.audio_url)
+    with c2:
+        st.header(f"{p.artist} — {p.title}"); st.write(f"**Price:** {money(p.price)}"); st.write(f"**Seller:** {s.store_name if s is not None else 'Unknown'}"); st.write(f"**Condition:** {p.media_grade} / {p.sleeve_grade}"); st.caption(f"Barcode: {p.barcode or 'N/A'} • Catalog: {p.catalog_number or 'N/A'}")
+        if p.external_release_url: st.link_button('Release/research link',p.external_release_url)
+    st.subheader('Description'); st.write(p.description or desc(p))
+    if s is not None:
+        pol=df('SELECT * FROM seller_policies WHERE seller_id=?',(int(s.id),))
+        with st.expander('Seller store policies'):
+            if pol.empty: st.info('Seller has not added detailed policies yet; House Of Wax minimum rules still apply.')
+            else:
+                r=pol.iloc[0]
+                st.write('**Shipping:**',r.shipping_policy or 'Not provided'); st.write('**Returns:**',r.return_policy or 'Not provided'); st.write('**Grading:**',r.grading_policy or 'Not provided'); st.write('**Buyer requirements:**',r.buyer_requirements or 'Not provided')
+    st.divider(); st.subheader('Buy / Contact Seller')
+    buyers=table('buyers')
+    if buyers.empty: st.warning('Register as a buyer first.')
     else:
-        public = inv[(inv.public_visible == "Yes") & (inv.quantity > 0) & (inv.listing_status == "Active")]
-        if "selected_sku" not in st.session_state:
-            st.session_state.selected_sku = ""
-
-        if st.session_state.selected_sku:
-            chosen = public[public.sku == st.session_state.selected_sku]
-            if chosen.empty:
-                st.session_state.selected_sku = ""
-                st.rerun()
+        choice=st.selectbox('Buyer account',[f"{r.id} | {r.name} | {r.email} | {r.status}" for _,r in buyers.iterrows()])
+        bid=int(choice.split('|')[0]); b=buyers[buyers.id==bid].iloc[0]
+        action=st.selectbox('Action',['Buy Now Request','Ask Seller a Question','Make Offer'])
+        msg=st.text_area('Message')
+        if st.button('Submit'):
+            ok,reason=buyer_ok(b)
+            if action=='Buy Now Request' and not ok: st.error(reason)
             else:
-                render_product_detail(chosen.iloc[0])
-        else:
-            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-            search = c1.text_input("Search records", placeholder="Artist, title, genre, barcode...")
-            genres = sorted([g for g in public.genre.dropna().astype(str).unique().tolist() if g.strip()])
-            genre_filter = c2.selectbox("Genre", ["All"] + genres)
-            condition_filter = c3.selectbox("Condition", ["All"] + sorted([g for g in public.condition.dropna().astype(str).unique().tolist() if g.strip()]))
-            sort_by = c4.selectbox("Sort", ["Newest", "Price low", "Price high", "Artist A-Z"])
+                total=float(p.price or 0)+float(p.shipping_price or 0); f=fee(total); payout=round(total-f,2)
+                q('INSERT INTO orders (product_id,seller_id,buyer_id,order_type,status,item_price,shipping_price,platform_fee,seller_payout,buyer_message,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',(int(p.id),int(p.seller_id),bid,action,'New',float(p.price or 0),float(p.shipping_price or 0),f,payout,msg,now(),now()))
+                st.success('Sent to seller.')
+    with st.expander('Report this listing'):
+        reason=st.selectbox('Reason',['Counterfeit / Bootleg','Misgraded Condition','Wrong Information','Offensive Content','Spam / Scam','Prohibited Item','Other'])
+        details=st.text_area('Details')
+        if st.button('Submit report'):
+            q('INSERT INTO listing_flags (product_id,seller_id,buyer_id,reason,details,created_at) VALUES (?,?,?,?,?,?)',(int(p.id),int(p.seller_id),None,reason,details,now()))
+            q("UPDATE products SET listing_status='Flagged' WHERE id=?",(int(p.id),)); st.success('Flagged for review.')
 
-            if search:
-                public = public[public.astype(str).apply(lambda col: col.str.contains(search, case=False, na=False)).any(axis=1)]
-            if genre_filter != "All":
-                public = public[public.genre.astype(str) == genre_filter]
-            if condition_filter != "All":
-                public = public[public.condition.astype(str) == condition_filter]
-            if sort_by == "Price low":
-                public = public.sort_values("price", ascending=True)
-            elif sort_by == "Price high":
-                public = public.sort_values("price", ascending=False)
-            elif sort_by == "Artist A-Z":
-                public = public.sort_values(["artist", "title"], ascending=True)
-            else:
-                public = public.sort_values("updated_at", ascending=False) if "updated_at" in public.columns else public
+def marketplace():
+    header(); st.header('Marketplace')
+    products=df("SELECT * FROM products WHERE listing_status='Active' AND quantity>0 ORDER BY created_at DESC")
+    if 'product' in st.session_state:
+        r=products[products.id==st.session_state.product]
+        if not r.empty: product_detail(r.iloc[0]); return
+    if products.empty: st.info('No active listings yet.'); return
+    c1,c2,c3=st.columns(3); search=c1.text_input('Search'); cat=c2.selectbox('Category',['All']+sorted(products.category.dropna().unique().tolist())); sort=c3.selectbox('Sort',['Newest','Price Low','Price High','Artist A-Z'])
+    x=products.copy()
+    if search:
+        ss=search.lower(); x=x[x.artist.fillna('').str.lower().str.contains(ss)|x.title.fillna('').str.lower().str.contains(ss)|x.barcode.fillna('').str.lower().str.contains(ss)|x.catalog_number.fillna('').str.lower().str.contains(ss)]
+    if cat!='All': x=x[x.category==cat]
+    if sort=='Price Low': x=x.sort_values('price')
+    elif sort=='Price High': x=x.sort_values('price',ascending=False)
+    elif sort=='Artist A-Z': x=x.sort_values('artist')
+    cols=st.columns(3)
+    for i,(_,p) in enumerate(x.iterrows()):
+        with cols[i%3]: product_card(p)
 
-            st.caption(f"Showing {len(public)} available record(s).")
-            if public.empty:
-                st.info("No records match that search.")
-            else:
-                cols = st.columns(3)
-                for idx, (_, r) in enumerate(public.iterrows()):
-                    with cols[idx % 3]:
-                        render_product_card(r)
+def register():
+    header(); st.header('Register / Sell')
+    t1,t2=st.tabs(['Buyer Registration','Seller Application'])
+    with t1:
+        with st.form('buyer'):
+            name=st.text_input('Name'); email=st.text_input('Email'); phone=st.text_input('Phone'); city=st.text_input('City')
+            if st.form_submit_button('Register Buyer'):
+                try: q('INSERT INTO buyers (name,email,phone,city,created_at) VALUES (?,?,?,?,?)',(name,email,phone,city,now())); st.success('Buyer registered.')
+                except Exception as e: st.error(e)
+    with t2:
+        st.write('Sellers must be approved. Once approved, fixed-price listings go live without product-by-product approval. Bad listings can be flagged.')
+        with st.form('seller'):
+            store=st.text_input('Store name'); owner=st.text_input('Owner'); email=st.text_input('Email'); phone=st.text_input('Phone'); city=st.text_input('City'); bio=st.text_area('Store bio'); code=st.text_input('Private seller access code'); agree=st.checkbox('I agree to House Of Wax platform rules.')
+            if st.form_submit_button('Apply'):
+                if not agree: st.error('Must agree.')
+                else:
+                    try: q('INSERT INTO sellers (store_name,owner_name,email,phone,city,store_bio,access_code,created_at) VALUES (?,?,?,?,?,?,?,?)',(store,owner,email,phone,city,bio,code,now())); st.success('Seller application submitted.')
+                    except Exception as e: st.error(e)
 
-    st.caption("Customer view hides costs, expenses, sales reports, and admin tools.")
-
-elif mode == "Seller Storefronts":
-    apply_storefront_css()
-    st.title("House Of Wax Seller Storefronts")
-    sellers = table("sellers")
-    inv = table("inventory")
-    approved = sellers[sellers.status == "Approved"] if not sellers.empty else sellers
-    if approved.empty:
-        st.info("No approved seller storefronts yet.")
-    else:
-        choice = st.selectbox("Choose seller", [f"{r.id} | {r.store_name}" for _, r in approved.iterrows()])
-        seller_id = int(choice.split("|")[0].strip())
-        seller = approved[approved.id == seller_id].iloc[0]
-        st.header(seller.store_name)
-        items = inv[(inv.owner_type == "Marketplace Seller") & (inv.seller_id == seller_id) & (inv.quantity > 0)]
-        if items.empty:
-            st.info("This seller has no active listings.")
-        else:
-            cols = st.columns(3)
-            for idx, (_, r) in enumerate(items.iterrows()):
-                with cols[idx % 3]:
-                    render_product_card(r)
-
-else:
-    if "auth" not in st.session_state:
-        st.session_state.auth = False
-    if not st.session_state.auth:
-        st.title("House Of Wax Admin Login")
-        pw = st.text_input("Password", type="password")
-        if st.button("Login"):
-            if ADMIN_PASSWORD and pw == ADMIN_PASSWORD:
-                st.session_state.auth = True
-                st.rerun()
-            else:
-                st.error("Wrong password or admin password not set in Streamlit Secrets.")
-        if not ADMIN_PASSWORD:
-            st.error("Admin password is not set yet. Add ADMIN_PASSWORD in Streamlit Secrets before using Admin Login.")
-        else:
-            st.info("Admin password is set securely in Streamlit Secrets.")
-        st.stop()
-
-    if st.sidebar.button("Logout"):
-        st.session_state.auth = False
-        st.rerun()
-
-    tabs = st.tabs(['Dashboard', 'Barcode Scanner', 'Inventory', 'Upload CSV', 'Media Manager', 'Internet Media Finder', 'Sellers', 'Seller Listings', 'Marketplace Orders', 'Expenses', 'Hold Requests', 'Cleanup', 'Reports'])
-
+def seller_dash():
+    header(); st.header('Seller Dashboard')
+    email=st.text_input('Seller email'); code=st.text_input('Access code',type='password')
+    if not st.button('Enter'): return
+    s=df('SELECT * FROM sellers WHERE email=? AND access_code=?',(email,code))
+    if s.empty: st.error('Seller not found.'); return
+    s=s.iloc[0]
+    if s.status!='Approved': st.warning(f'Seller status: {s.status}. Admin must approve before selling.'); return
+    st.success(f'Logged in as {s.store_name}')
+    tabs=st.tabs(['My Store','Store Policies','Add Product','My Listings','Auctions','Orders','Social Posts','Rules'])
+    sid=int(s.id)
     with tabs[0]:
-        st.subheader("Dashboard")
-        with st.expander("Storefront Branding & Sales Settings", expanded=False):
-            settings = get_store_settings()
-            st.write("Add your logo, banner, tagline, contact info, and announcement. These show on the public storefront.")
-            with st.form("store_settings_form"):
-                store_name = st.text_input("Store name", value=settings["store_name"])
-                tagline = st.text_input("Tagline", value=settings["tagline"])
-                announcement = st.text_area("Storefront announcement", value=settings["announcement"])
-                logo_upload = st.file_uploader("Upload logo", type=["jpg", "jpeg", "png", "webp"], key="logo_upload")
-                banner_upload = st.file_uploader("Upload banner / hero image", type=["jpg", "jpeg", "png", "webp"], key="banner_upload")
-                logo_url = st.text_input("Logo URL or saved file path", value=settings["logo_url"])
-                banner_url = st.text_input("Banner URL or saved file path", value=settings["banner_url"])
-                instagram_url = st.text_input("Instagram URL", value=settings["instagram_url"])
-                contact_email = st.text_input("Contact email", value=settings["contact_email"])
-                contact_phone = st.text_input("Contact phone", value=settings["contact_phone"])
-                pickup_note = st.text_input("Pickup note", value=settings.get("pickup_note", ""))
-                shipping_note = st.text_input("Shipping note", value=settings.get("shipping_note", ""))
-                payment_link = st.text_input("Optional payment/checkout link", value=settings.get("payment_link", ""))
-                if st.form_submit_button("Save Storefront Settings"):
-                    if logo_upload is not None:
-                        logo_url = save_brand_file(logo_upload, "logo")
-                    if banner_upload is not None:
-                        banner_url = save_brand_file(banner_upload, "banner")
-                    for k, v in {
-                        "store_name": store_name, "tagline": tagline, "announcement": announcement,
-                        "logo_url": logo_url, "banner_url": banner_url, "instagram_url": instagram_url,
-                        "contact_email": contact_email, "contact_phone": contact_phone,
-                        "pickup_note": pickup_note, "shipping_note": shipping_note, "payment_link": payment_link
-                    }.items():
-                        set_store_setting(k, v)
-                    st.success("Storefront settings saved.")
-        inv = table("inventory")
-        sellers = table("sellers")
-        orders = table("orders")
-        expenses = table("expenses")
-        media = table("media_assets")
-        c1,c2,c3,c4,c5,c6 = st.columns(6)
-        c1.metric("Units", int(inv.quantity.sum()) if not inv.empty else 0)
-        c2.metric("Retail Value", money((inv.price * inv.quantity).sum()) if not inv.empty else "$0.00")
-        c3.metric("Cost Value", money((inv.cost * inv.quantity).sum()) if not inv.empty else "$0.00")
-        c4.metric("Sellers", len(sellers))
-        c5.metric("Orders", len(orders))
-        c6.metric("Media Files", len(media))
-        if not inv.empty:
-            st.subheader("Low Stock")
-            st.dataframe(inv[inv.quantity <= inv.reorder_level][["sku","barcode","artist","title","quantity","reorder_level","location"]], use_container_width=True)
-
+        with st.form('profile'):
+            store=st.text_input('Store name',value=s.store_name); bio=st.text_area('Bio',value=s.store_bio or ''); logo=st.text_input('Logo URL',value=s.logo_url or ''); banner=st.text_input('Banner URL',value=s.banner_url or '')
+            if st.form_submit_button('Save'): q('UPDATE sellers SET store_name=?,store_bio=?,logo_url=?,banner_url=? WHERE id=?',(store,bio,logo,banner,sid)); st.success('Saved.')
     with tabs[1]:
-        st.subheader("Two-Way Barcode Scanner / Release Lookup")
-        st.write("Use a USB/Bluetooth scanner, QRbot, or manually type the barcode from the back cover. The barcode can find an existing item in your inventory or help identify album metadata from MusicBrainz/Discogs.")
-        barcode = st.text_input("Scan or type barcode / UPC / EAN")
-        catalog_lookup = st.text_input("Optional catalog number from spine/back cover")
-        inv = table("inventory")
-        if barcode:
-            clean_barcode = normalize_barcode(barcode)
-            found = inv[inv.barcode.astype(str).str.replace(r"\\D", "", regex=True) == clean_barcode] if not inv.empty else inv
-            if not found.empty:
-                st.success("Barcode found in House Of Wax inventory.")
-                st.dataframe(found, use_container_width=True)
-            else:
-                st.warning("Barcode not found in your inventory yet. Use lookup tools below to identify and add it.")
-
-            st.write("### Fast web lookups")
-            st.caption("Barcode is usually the first identifier to try. Catalog number and matrix/runout help narrow down exact pressings.")
-            for name, url in barcode_search_links(clean_barcode, catalog_lookup).items():
-                st.link_button(name, url)
-
-            st.write("### Try MusicBrainz auto-lookup")
-            if st.button("Lookup barcode metadata"):
-                results = musicbrainz_lookup_by_barcode(clean_barcode)
-                st.session_state["barcode_lookup_results"] = results
-                if not results:
-                    st.error("No automatic MusicBrainz results found. Try the Discogs barcode/catalog search buttons above.")
-
-            results = st.session_state.get("barcode_lookup_results", [])
-            if results:
-                st.success(f"Found {len(results)} possible release match(es).")
-                for i, res in enumerate(results):
-                    with st.expander(f"Match {i+1}: {res.get('artist','')} — {res.get('title','')}", expanded=(i==0)):
-                        st.json(res)
-                        c1,c2,c3 = st.columns(3)
-                        condition = c1.text_input("Condition", value="Used - Review", key=f"lookup_cond_{i}")
-                        price = c2.number_input("Price", min_value=0.0, step=0.01, key=f"lookup_price_{i}")
-                        quantity = c3.number_input("Quantity", min_value=1, value=1, key=f"lookup_qty_{i}")
-                        if st.button("Add this match to inventory", key=f"add_lookup_{i}"):
-                            item = dict(res)
-                            item.update({"condition": condition, "price": price, "quantity": quantity, "public_visible": "No"})
-                            save_inventory(item)
-                            st.success("Added as private inventory. Review it, add media, then mark Public Visible = Yes when ready.")
-
-            st.write("### Add manually from barcode")
-            with st.form("barcode_add"):
-                artist = st.text_input("Artist")
-                title = st.text_input("Title")
-                c1,c2,c3 = st.columns(3)
-                fmt = c1.selectbox("Format", ["Vinyl","CD","Cassette","DVD","Merch","Other"])
-                genre = c2.text_input("Genre")
-                condition = c3.text_input("Condition")
-                c4,c5,c6 = st.columns(3)
-                cost = c4.number_input("Cost", min_value=0.0, step=0.01)
-                price = c5.number_input("Price", min_value=0.0, step=0.01)
-                quantity = c6.number_input("Quantity", min_value=1, value=1)
-                label = st.text_input("Label")
-                release_year = st.text_input("Release year")
-                pressing_notes = st.text_area("Pressing / identifier notes", placeholder="Catalog number, matrix/runout, promo, club edition, country, etc.")
-                if st.form_submit_button("Add Record From Barcode"):
-                    save_inventory({"barcode": clean_barcode, "catalog_number": catalog_lookup, "artist": artist, "title": title, "format": fmt, "genre": genre, "condition": condition, "cost": cost, "price": price, "quantity": quantity, "label": label, "release_year": release_year, "pressing_notes": pressing_notes})
-                    st.success("Record added.")
-
+        pol=df('SELECT * FROM seller_policies WHERE seller_id=?',(sid,)); r=pol.iloc[0] if not pol.empty else {}
+        with st.form('pol'):
+            shipping=st.text_area('Shipping policy',value=r.get('shipping_policy','') if len(r) else ''); returns=st.text_area('Return policy',value=r.get('return_policy','') if len(r) else ''); grading=st.text_area('Grading policy',value=r.get('grading_policy','') if len(r) else ''); service=st.text_area('Customer service policy',value=r.get('customer_service_policy','') if len(r) else ''); bundle=st.text_area('Bundle policy',value=r.get('bundle_policy','') if len(r) else ''); auction_policy=st.text_area('Auction policy',value=r.get('auction_policy','') if len(r) else ''); buyer_req=st.text_area('Buyer requirements',value=r.get('buyer_requirements','Buyer must be registered, in good standing, and pay within payment window.') if len(r) else 'Buyer must be registered, in good standing, and pay within payment window.'); pickup=st.text_area('Local pickup policy',value=r.get('local_pickup_policy','') if len(r) else ''); intl=st.text_area('International shipping policy',value=r.get('international_shipping_policy','') if len(r) else ''); processing=st.text_input('Processing time',value=r.get('processing_time',setting('default_processing_time')) if len(r) else setting('default_processing_time'))
+            if st.form_submit_button('Save Policies'): q('INSERT OR REPLACE INTO seller_policies VALUES (?,?,?,?,?,?,?,?,?,?,?)',(sid,shipping,returns,grading,service,bundle,auction_policy,buyer_req,pickup,intl,processing)); st.success('Policies saved.')
     with tabs[2]:
-        st.subheader("Inventory")
-        inv = table("inventory")
-        st.dataframe(inv, use_container_width=True)
-        with st.form("manual"):
-            st.subheader("Add / Edit")
-            c1,c2,c3 = st.columns(3)
-            sku = c1.text_input("SKU")
-            barcode = c2.text_input("Barcode / UPC / EAN")
-            public_visible = c3.selectbox("Public Visible", ["Yes","No"])
-            ccat1, ccat2 = st.columns(2)
-            catalog_number = ccat1.text_input("Catalog number")
-            matrix_runout = ccat2.text_input("Matrix/runout")
-            c4,c5 = st.columns(2)
-            artist = c4.text_input("Artist")
-            title = c5.text_input("Title")
-            c6,c7,c8 = st.columns(3)
-            fmt = c6.selectbox("Format", ["Vinyl","CD","Cassette","DVD","Merch","Other"])
-            genre = c7.text_input("Genre")
-            condition = c8.text_input("Condition")
-            c9,c10,c11,c12 = st.columns(4)
-            cost = c9.number_input("Cost", min_value=0.0, step=0.01)
-            price = c10.number_input("Price", min_value=0.0, step=0.01)
-            quantity = c11.number_input("Quantity", min_value=0, step=1)
-            reorder = c12.number_input("Reorder Level", min_value=0, value=2)
-            location = st.text_input("Location")
-            label = st.text_input("Label")
-            release_year = st.text_input("Release year")
-            pressing_notes = st.text_area("Pressing notes / identifiers")
-            if st.form_submit_button("Save"):
-                save_inventory({"sku":sku,"barcode":barcode,"artist":artist,"title":title,"format":fmt,"genre":genre,"condition":condition,"cost":cost,"price":price,"quantity":quantity,"reorder_level":reorder,"location":location,"public_visible":public_visible,"catalog_number":catalog_number,"matrix_runout":matrix_runout,"label":label,"release_year":release_year,"pressing_notes":pressing_notes})
-                st.success("Saved.")
-
+        with st.form('prod'):
+            c1,c2,c3=st.columns(3); sku=c1.text_input('SKU'); barcode=c2.text_input('Barcode/UPC/EAN'); catalog=c3.text_input('Catalog number')
+            matrix=st.text_input('Matrix/runout'); category=st.selectbox('Category',['Vinyl Records','CDs','Cassettes','Music DVDs/VHS','Music Books/Magazines','Posters','Music Memorabilia','Vintage Clothing','Streetwear','Band Tees','DJ Gear/Accessories','Culture Goods']); artist=st.text_input('Artist/Brand'); title=st.text_input('Title/Product'); fmt=st.text_input('Format',value='Vinyl'); label=st.text_input('Label/Brand'); year=st.text_input('Year'); genre=st.text_input('Genre/Style'); media=st.selectbox('Media/Product grade',['Mint','Near Mint','VG+','VG','Good','Fair','Poor','New','Used','N/A']); sleeve=st.selectbox('Sleeve/Packaging grade',['Mint','Near Mint','VG+','VG','Good','Fair','Poor','New','Used','N/A']); notes=st.text_area('Condition notes')
+            generated=desc({'artist':artist,'title':title,'format':fmt,'genre':genre,'label':label,'release_year':year,'media_grade':media,'sleeve_grade':sleeve,'catalog_number':catalog,'barcode':barcode,'matrix_runout':matrix,'condition_notes':notes})
+            description=st.text_area('Description',value=generated,height=170); price=st.number_input('Price',min_value=0.0,step=0.01); qty=st.number_input('Quantity',min_value=1,value=1); ship=st.number_input('Shipping price',min_value=0.0,step=0.01); image=st.text_input('Image URL'); video=st.text_input('Video URL'); audio=st.text_input('Audio URL'); ext=st.text_input('Discogs/MusicBrainz/Popsike URL'); status=st.selectbox('Status',['Active','Draft'])
+            if st.form_submit_button('Publish Product'):
+                q('INSERT INTO products (seller_id,sku,barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,video_url,audio_url,external_release_url,listing_status,listing_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(sid,sku,barcode,catalog,matrix,category,artist,title,fmt,label,year,genre,media,sleeve,notes,description,price,qty,ship,image,video,audio,ext,status,'Fixed Price',now(),now())); st.success('Product saved.')
     with tabs[3]:
-        st.subheader("Upload CSV")
-        uploaded = st.file_uploader("Choose CSV", type=["csv"])
-        if uploaded:
-            df = pd.read_csv(uploaded)
-            df.columns = [c.lower().strip() for c in df.columns]
-            st.dataframe(df.head(20), use_container_width=True)
-            if st.button("Import / Update Inventory"):
-                if "artist" not in df.columns or "title" not in df.columns:
-                    st.error("CSV must include artist and title.")
-                else:
-                    for _, row in df.iterrows():
-                        save_inventory(row.to_dict())
-                    st.success(f"Imported {len(df)} rows.")
-
+        prods=df('SELECT * FROM products WHERE seller_id=? ORDER BY created_at DESC',(sid,)); st.dataframe(prods,use_container_width=True)
+        if not prods.empty:
+            pid=st.selectbox('Product ID',prods.id.tolist()); status=st.selectbox('New status',['Active','Draft','Sold','Removed'])
+            if st.button('Update status'): q('UPDATE products SET listing_status=?,updated_at=? WHERE id=? AND seller_id=?',(status,now(),int(pid),sid)); st.success('Updated.')
     with tabs[4]:
-        st.subheader("Media Manager")
-        st.write("Attach pictures, audio clips, and videos to records. Public media appears on the customer storefront; private media stays admin-only.")
-        inv = table("inventory")
-        if inv.empty:
-            st.info("Add inventory first, then upload media.")
-        else:
-            item_choice = st.selectbox("Choose record for media", [f"{r.sku} | {r.artist} - {r.title}" for _, r in inv.iterrows()])
-            sku = item_choice.split("|")[0].strip()
-            record = inv[inv.sku == sku].iloc[0]
-            st.write(f"### {record.artist} — {record.title}")
-            st.caption(f"SKU: {sku}")
-            media_type = st.selectbox("Media Type", ["Picture", "Audio", "Video"])
-            public_visible = st.selectbox("Show media on Public Storefront?", ["Yes", "No"])
-            caption_text = st.text_input("Media Caption / Notes")
-            if media_type == "Picture":
-                files = st.file_uploader("Upload pictures", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
-            elif media_type == "Audio":
-                files = st.file_uploader("Upload audio clips", type=["mp3", "wav", "m4a", "aac", "ogg"], accept_multiple_files=True)
-            else:
-                files = st.file_uploader("Upload videos", type=["mp4", "mov", "m4v", "webm"], accept_multiple_files=True)
-            if st.button("Save Media"):
-                if not files:
-                    st.error("Choose at least one file first.")
-                else:
-                    for uploaded in files:
-                        save_media_file(sku, uploaded, media_type, public_visible, caption_text)
-                    st.success(f"Saved {len(files)} media file(s) to {record.artist} — {record.title}.")
-            st.write("### Existing Media For This Record")
-            current_media = get_media_for_sku(sku, public_only=False)
-            if current_media.empty:
-                st.info("No media uploaded for this record yet.")
-            else:
-                st.dataframe(current_media[["id", "media_type", "file_name", "public_visible", "caption", "uploaded_at"]], use_container_width=True)
-                render_media_assets(current_media)
-                delete_choice = st.selectbox("Delete media asset ID", [str(x) for x in current_media["id"].tolist()])
-                if st.button("Delete Selected Media"):
-                    delete_media_asset(delete_choice)
-                    st.success("Media deleted. Refresh or change tabs to update.")
+        ok,reason=auction_ok(s); st.info(f'Auction eligible: {ok}. {reason}')
+        prods=df("SELECT * FROM products WHERE seller_id=? AND listing_status='Active'",(sid,))
+        if ok and not prods.empty:
+            with st.form('auc'):
+                pid=st.selectbox('Product',prods.id.tolist()); title=st.text_input('Auction title'); start=st.number_input('Starting bid',min_value=0.0,step=1.0); reserve=st.number_input('Reserve',min_value=0.0,step=1.0); buy=st.number_input('Buy now',min_value=0.0,step=1.0); inc=st.number_input('Bid increment',min_value=1.0,step=1.0); end=st.text_input('End time'); status=st.selectbox('Status',['Draft','Live']); notes=st.text_area('Notes')
+                if st.form_submit_button('Create Auction'): q('INSERT INTO auctions (product_id,seller_id,auction_title,starting_bid,reserve_price,buy_now_price,bid_increment,start_time,end_time,status,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',(int(pid),sid,title,start,reserve,buy,inc,now(),end,status,notes,now())); st.success('Auction created.')
+        st.dataframe(df('SELECT * FROM auctions WHERE seller_id=?',(sid,)),use_container_width=True)
+    with tabs[5]: st.dataframe(df('SELECT * FROM orders WHERE seller_id=? ORDER BY created_at DESC',(sid,)),use_container_width=True)
+    with tabs[6]: st.write('Generate post copy from listings. Full social automation can be connected later.'); st.dataframe(df('SELECT * FROM social_posts WHERE seller_id=?',(sid,)),use_container_width=True)
+    with tabs[7]: st.markdown('Seller rules can be stronger than House Of Wax rules, but never weaker. Sellers handle upload, pricing, shipping, customer service, and store policies.')
 
+def auctions():
+    header(); st.header('Auctions'); st.caption('Sellers earn auctions through sales, rating, and platform history.')
+    a=df("SELECT a.*,p.artist,p.title,p.image_url,s.store_name FROM auctions a LEFT JOIN products p ON a.product_id=p.id LEFT JOIN sellers s ON a.seller_id=s.id WHERE a.status='Live'")
+    if a.empty: st.info('No live auctions.'); return
+    buyers=table('buyers')
+    for _,r in a.iterrows():
+        with st.container(border=True):
+            if r.image_url: st.image(r.image_url,use_container_width=True)
+            st.subheader(r.auction_title); st.caption(f"{r.artist} — {r.title} • Seller: {r.store_name}")
+            high=df('SELECT MAX(bid_amount) h FROM bids WHERE auction_id=?',(int(r.id),)).iloc[0].h; current=high if pd.notna(high) else r.starting_bid
+            st.write(f'Current bid: {money(current)}')
+            if buyers.empty: st.warning('Register as buyer first.')
+            else:
+                choice=st.selectbox('Buyer',[f"{b.id} | {b.name} | {b.status}" for _,b in buyers.iterrows()],key=f'buyer{r.id}'); bid=int(choice.split('|')[0]); br=buyers[buyers.id==bid].iloc[0]; amount=st.number_input('Bid amount',min_value=float(current)+float(r.bid_increment),step=float(r.bid_increment),key=f'amt{r.id}')
+                if st.button('Place Bid',key=f'pb{r.id}'):
+                    ok,reason=buyer_ok(br)
+                    if not ok: st.error(reason)
+                    else: q('INSERT INTO bids VALUES (NULL,?,?,?,?)',(int(r.id),bid,amount,now())); st.success('Bid placed.')
 
+def stores():
+    header(); st.header('Seller Stores')
+    sellers=df("SELECT * FROM sellers WHERE status='Approved' ORDER BY store_name")
+    if sellers.empty: st.info('No approved seller stores yet.'); return
+    for _,s in sellers.iterrows():
+        with st.container(border=True):
+            if s.banner_url: st.image(s.banner_url,use_container_width=True)
+            st.subheader(s.store_name); st.caption(f"{s.seller_level} • Rating {s.rating}% • Sales {s.completed_sales}"); st.write(s.store_bio or '')
+
+def culture():
+    header(); st.header('Music + Culture')
+    posts=df("SELECT * FROM culture_posts WHERE status='Published' ORDER BY created_at DESC")
+    if posts.empty: st.info('No culture posts yet. Use Admin to publish seller spotlights, music guides, clothing/culture stories, auction previews, and collecting education.')
+    for _,p in posts.iterrows():
+        with st.container(border=True):
+            if p.image_url: st.image(p.image_url,use_container_width=True)
+            st.subheader(p.title); st.caption(f'{p.category} • {p.author}'); st.write(p.body)
+
+def admin():
+    header(); st.header('House Of Wax Platform Admin')
+    pw=st.text_input('Admin password',type='password')
+    if not st.button('Login'): return
+    if not ADMIN_PASSWORD: st.error('Set ADMIN_PASSWORD in Streamlit Secrets.'); return
+    if pw!=ADMIN_PASSWORD: st.error('Wrong password.'); return
+    tabs=st.tabs(['Overview','Seller Applications','Sellers','Buyers','Flagged Listings','Orders','Disputes','Auctions','Culture','Settings','Reports','Business Plan'])
+    with tabs[0]:
+        c1,c2,c3,c4=st.columns(4); c1.metric('Sellers',len(table('sellers'))); c2.metric('Buyers',len(table('buyers'))); c3.metric('Listings',len(table('products'))); c4.metric('Flags',len(table('listing_flags')))
+        st.info('V15 rule: approve sellers, not every listing. Flag problems. Auctions are earned. Buyers are accountable too.')
+    with tabs[1]:
+        pending=df("SELECT * FROM sellers WHERE status='Pending'"); st.dataframe(pending,use_container_width=True)
+        if not pending.empty:
+            sid=st.selectbox('Seller ID',pending.id.tolist()); action=st.selectbox('Decision',['Approved','Rejected'])
+            if st.button('Apply decision'): q('UPDATE sellers SET status=?,seller_level=? WHERE id=?',(action,'Approved Seller' if action=='Approved' else 'Rejected',int(sid))); st.success('Updated.')
+    with tabs[2]:
+        sellers=table('sellers'); st.dataframe(sellers,use_container_width=True)
+        if not sellers.empty:
+            sid=st.selectbox('Manage seller ID',sellers.id.tolist()); status=st.selectbox('Status',['Pending','Approved','Suspended','Rejected','Verified']); override=st.selectbox('Auction override',['No','Yes']); sales=st.number_input('Completed sales',min_value=0,step=1); rating=st.number_input('Rating',0.0,100.0,100.0); strikes=st.number_input('Strikes',min_value=0,step=1); disputes=st.number_input('Disputes',min_value=0,step=1)
+            if st.button('Update seller'): q('UPDATE sellers SET status=?,auction_override=?,completed_sales=?,rating=?,strikes=?,disputes=? WHERE id=?',(status,override,sales,rating,strikes,disputes,int(sid))); st.success('Seller updated.')
+    with tabs[3]:
+        buyers=table('buyers'); st.dataframe(buyers,use_container_width=True)
+        if not buyers.empty:
+            bid=st.selectbox('Buyer ID',buyers.id.tolist()); status=st.selectbox('Buyer status',['New Buyer','Verified Buyer','Trusted Buyer','Restricted Buyer','Suspended Buyer']); rating=st.number_input('Buyer rating',0.0,100.0,100.0); unpaid=st.number_input('Unpaid orders',min_value=0,step=1); strikes=st.number_input('Buyer strikes',min_value=0,step=1)
+            if st.button('Update buyer'): q('UPDATE buyers SET status=?,rating=?,unpaid_orders=?,strikes=? WHERE id=?',(status,rating,unpaid,strikes,int(bid))); st.success('Buyer updated.')
+    with tabs[4]:
+        flags=df('SELECT f.*,p.artist,p.title,s.store_name FROM listing_flags f LEFT JOIN products p ON f.product_id=p.id LEFT JOIN sellers s ON f.seller_id=s.id ORDER BY f.created_at DESC'); st.dataframe(flags,use_container_width=True)
+        if not flags.empty:
+            fid=st.selectbox('Flag ID',flags.id.tolist()); decision=st.selectbox('Decision',['Dismiss','Keep Under Review','Remove Listing','Suspend Seller','Issue Strike']); notes=st.text_area('Admin notes')
+            if st.button('Resolve flag'):
+                row=flags[flags.id==fid].iloc[0]
+                if decision=='Remove Listing': q("UPDATE products SET listing_status='Removed' WHERE id=?",(int(row.product_id),))
+                if decision=='Suspend Seller': q("UPDATE sellers SET status='Suspended' WHERE id=?",(int(row.seller_id),))
+                if decision=='Issue Strike': q('UPDATE sellers SET strikes=strikes+1 WHERE id=?',(int(row.seller_id),))
+                q('UPDATE listing_flags SET status=?,admin_notes=? WHERE id=?',(decision,notes,int(fid))); st.success('Resolved.')
     with tabs[5]:
-        st.subheader("Internet Media Finder")
-        st.write("Use this to quickly attach official media links and thumbnails. Paste a URL, and the app will guess the source, media type, and thumbnail when possible.")
-
-        inv = table("inventory")
-        if inv.empty:
-            st.info("Add inventory first, then use Internet Media Finder.")
-        else:
-            item_choice = st.selectbox("Choose record to search", [f"{r.sku} | {r.artist} - {r.title}" for _, r in inv.iterrows()])
-            sku = item_choice.split("|")[0].strip()
-            record = inv[inv.sku == sku].iloc[0]
-
-            st.write(f"### {record.artist} — {record.title}")
-            st.caption(f"SKU: {sku}")
-
-            custom_query = st.text_input(
-                "Optional custom search words",
-                value=f"{record.artist} {record.title} {record.label or ''} {record.release_year or ''} vinyl record".strip()
-            )
-
-            links = build_media_search_links(record.artist, record.title, record.label, record.release_year)
-            if custom_query:
-                custom_q = quote_plus(custom_query)
-                links["Custom Google Images"] = f"https://www.google.com/search?tbm=isch&q={custom_q}"
-                links["Custom YouTube"] = f"https://www.youtube.com/results?search_query={custom_q}"
-                links["Custom Web Search"] = f"https://www.google.com/search?q={custom_q}"
-
-            st.write("### Search the internet")
-            st.caption("Open these links, find the best legal/official media, copy the URL, then save it below.")
-            for name, url in links.items():
-                st.link_button(name, url)
-
-            st.divider()
-            st.write("### Save a media link to this record")
-            media_url = st.text_input("Paste media/page URL")
-            detected_source, detected_type = detect_media_source(media_url) if media_url else ("YouTube", "Video")
-            csrc, ctype = st.columns(2)
-            source = csrc.selectbox("Source", ["YouTube", "Discogs", "Google Images", "Internet Archive", "Bandcamp", "SoundCloud", "Official Website", "Direct Image", "Direct Video", "Direct Audio", "Other"], index=["YouTube", "Discogs", "Google Images", "Internet Archive", "Bandcamp", "SoundCloud", "Official Website", "Direct Image", "Direct Video", "Direct Audio", "Other"].index(detected_source) if detected_source in ["YouTube", "Discogs", "Google Images", "Internet Archive", "Bandcamp", "SoundCloud", "Official Website", "Direct Image", "Direct Video", "Direct Audio", "Other"] else 10)
-            media_type = ctype.selectbox("Media Link Type", ["Picture", "Audio", "Video", "Reference"], index=["Picture", "Audio", "Video", "Reference"].index(detected_type) if detected_type in ["Picture", "Audio", "Video", "Reference"] else 3)
-            link_title = st.text_input("Link title", value=f"{record.artist} - {record.title}")
-            auto_thumb = infer_thumbnail_url(media_type, source, media_url, "") if media_url else ""
-            public_visible = st.selectbox("Show this link on Public Storefront?", ["Yes", "No"], key="internet_public_visible")
-            notes = st.text_area("Notes / usage rights / source details")
-            thumbnail_url = st.text_input("Optional thumbnail URL (auto-filled for YouTube/direct images when possible)", value=auto_thumb)
-
-            if st.button("Save Internet Media Link"):
-                if not media_url.strip():
-                    st.error("Paste a URL first.")
-                else:
-                    save_internet_media_link(sku, source, media_type, link_title, media_url.strip(), public_visible, notes, thumbnail_url.strip())
-                    st.success("Saved internet media link to this record.")
-
-            st.write("### Saved Internet Media Links")
-            saved_links = get_internet_media_links(sku, public_only=False)
-            if saved_links.empty:
-                st.info("No internet media links saved for this record yet.")
-            else:
-                st.dataframe(saved_links[["id", "source", "media_type", "title", "url", "thumbnail_url", "public_visible", "saved_at"]], use_container_width=True)
-                render_internet_media_links(saved_links)
-
-                delete_link = st.selectbox("Delete internet media link ID", [str(x) for x in saved_links["id"].tolist()])
-                if st.button("Delete Selected Internet Link"):
-                    delete_internet_media_link(delete_link)
-                    st.success("Internet media link deleted. Refresh or change tabs to update.")
-
-
-    with tabs[6]:
-        st.subheader("House Of Wax Sellers / Sub-Stores")
-        with st.form("seller"):
-            c1,c2 = st.columns(2)
-            store_name = c1.text_input("Storefront Name")
-            seller_name = c2.text_input("Seller Name")
-            c3,c4 = st.columns(2)
-            email = c3.text_input("Email")
-            phone = c4.text_input("Phone")
-            c5,c6,c7 = st.columns(3)
-            commission = c5.number_input("Commission %", min_value=0.0, max_value=100.0, value=10.0)
-            monthly = c6.number_input("Monthly Storefront Fee", min_value=0.0, value=0.0)
-            status = c7.selectbox("Status", ["Pending","Approved","Suspended"])
-            if st.form_submit_button("Save Seller"):
-                q("""INSERT OR REPLACE INTO sellers
-                (store_name,seller_name,email,phone,commission_rate,monthly_fee,status,created_at)
-                VALUES (?,?,?,?,?,?,?,?)""",
-                (store_name,seller_name,email,phone,commission,monthly,status,datetime.now().isoformat(timespec="seconds")))
-                st.success("Seller saved.")
-        st.dataframe(table("sellers"), use_container_width=True)
-
-    with tabs[7]:
-        st.subheader("Create Seller Listing")
-        sellers = table("sellers")
-        approved = sellers[sellers.status == "Approved"] if not sellers.empty else sellers
-        if approved.empty:
-            st.info("Approve a seller first.")
-        else:
-            with st.form("seller_listing"):
-                seller_choice = st.selectbox("Seller", [f"{r.id} | {r.store_name} | {r.commission_rate}%" for _, r in approved.iterrows()])
-                seller_id = int(seller_choice.split("|")[0].strip())
-                seller = approved[approved.id == seller_id].iloc[0]
-                c1,c2 = st.columns(2)
-                barcode = c1.text_input("Barcode")
-                sku = c2.text_input("SKU")
-                c3,c4 = st.columns(2)
-                artist = c3.text_input("Artist")
-                title = c4.text_input("Title")
-                c5,c6,c7 = st.columns(3)
-                fmt = c5.selectbox("Format", ["Vinyl","CD","Cassette","DVD","Merch","Other"])
-                genre = c6.text_input("Genre")
-                condition = c7.text_input("Condition")
-                c8,c9,c10 = st.columns(3)
-                cost = c8.number_input("Seller/internal cost", min_value=0.0, step=0.01)
-                price = c9.number_input("Listing price", min_value=0.0, step=0.01)
-                quantity = c10.number_input("Quantity", min_value=1, value=1)
-                listing_fee = st.number_input("Listing fee charged", min_value=0.0, value=0.0)
-                if st.form_submit_button("Create Listing"):
-                    save_inventory({"sku":sku,"barcode":barcode,"artist":artist,"title":title,"format":fmt,"genre":genre,"condition":condition,"cost":cost,"price":price,"quantity":quantity,"public_visible":"Yes","owner_type":"Marketplace Seller","seller_id":seller_id,"commission_rate":seller.commission_rate,"listing_fee":listing_fee})
-                    st.success("Seller listing created.")
-        inv = table("inventory")
-        if not inv.empty:
-            st.dataframe(inv[inv.owner_type == "Marketplace Seller"], use_container_width=True)
-
+        orders=table('orders'); st.dataframe(orders,use_container_width=True)
+        if not orders.empty:
+            oid=st.selectbox('Order ID',orders.id.tolist()); status=st.selectbox('Order status',['New','Contacted','Invoice Sent','Paid','Shipped','Completed','Cancelled','Disputed'])
+            if st.button('Update order'): q('UPDATE orders SET status=?,updated_at=? WHERE id=?',(status,now(),int(oid))); st.success('Order updated.')
+    with tabs[6]: st.dataframe(table('disputes'),use_container_width=True)
+    with tabs[7]: st.dataframe(table('auctions'),use_container_width=True)
     with tabs[8]:
-        st.subheader("Marketplace Orders / Payouts")
-        inv = table("inventory")
-        active = inv[(inv.owner_type == "Marketplace Seller") & (inv.quantity > 0)] if not inv.empty else inv
-        if active.empty:
-            st.info("No active seller listings.")
-        else:
-            with st.form("order"):
-                item_choice = st.selectbox("Sold item", [f"{r.sku} | Seller {int(r.seller_id)} | {r.artist} - {r.title} | {money(r.price)}" for _, r in active.iterrows()])
-                sku = item_choice.split("|")[0].strip()
-                item = active[active.sku == sku].iloc[0]
-                sale_price = st.number_input("Sale price", min_value=0.0, value=float(item.price), step=0.01)
-                buyer_name = st.text_input("Buyer name")
-                buyer_email = st.text_input("Buyer email")
-                if st.form_submit_button("Record Sale"):
-                    fee = sale_price * float(item.commission_rate) / 100
-                    payout = sale_price - fee
-                    q("""INSERT INTO orders
-                    (order_date, sku, seller_id, sale_price, platform_fee, seller_payout, buyer_name, buyer_email, status, created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                    (date.today().isoformat(), sku, int(item.seller_id), sale_price, fee, payout, buyer_name, buyer_email, "New", datetime.now().isoformat(timespec="seconds")))
-                    q("UPDATE inventory SET quantity = MAX(quantity - 1, 0), updated_at = ? WHERE sku = ?", (datetime.now().isoformat(timespec="seconds"), sku))
-                    st.success(f"Sale recorded. Platform fee: {money(fee)}. Seller payout: {money(payout)}.")
-        orders = table("orders")
-        st.dataframe(orders, use_container_width=True)
-
+        with st.form('culture'):
+            title=st.text_input('Title'); cat=st.selectbox('Category',['Music','Clothing','Culture','Collecting Guide','Seller Spotlight','Auction Preview','Regional History']); author=st.text_input('Author',value='House Of Wax'); img=st.text_input('Image URL'); body=st.text_area('Body')
+            if st.form_submit_button('Publish'): q('INSERT INTO culture_posts (title,category,author,body,image_url,created_at) VALUES (?,?,?,?,?,?)',(title,cat,author,body,img,now())); st.success('Published.')
     with tabs[9]:
-        st.subheader("Expenses")
-        with st.form("expense"):
-            c1,c2,c3 = st.columns(3)
-            expense_date = c1.date_input("Date", value=date.today())
-            category = c2.text_input("Category", value="Supplies")
-            amount = c3.number_input("Amount", min_value=0.0, step=0.01)
-            vendor = st.text_input("Vendor")
-            description = st.text_area("Description")
-            if st.form_submit_button("Add Expense"):
-                q("INSERT INTO expenses (expense_date,category,vendor,description,amount,created_at) VALUES (?,?,?,?,?,?)",
-                  (expense_date.isoformat(), category, vendor, description, amount, datetime.now().isoformat(timespec="seconds")))
-                st.success("Expense added.")
-        st.dataframe(table("expenses"), use_container_width=True)
-
+        for k in ['platform_commission_percent','auction_commission_percent','auction_min_completed_sales','auction_min_rating','site_tagline','announcement','logo_url','buyer_payment_window_hours','default_processing_time']:
+            val=st.text_input(k,value=setting(k),key=k)
+            if st.button(f'Save {k}',key=f'save{k}'): set_setting(k,val); st.success('Saved.')
     with tabs[10]:
-        st.subheader("Hold Requests")
-        st.dataframe(table("hold_requests"), use_container_width=True)
-        st.subheader("Purchase / Reserve Requests")
-        st.dataframe(table("purchase_requests"), use_container_width=True)
+        choice=st.selectbox('Table',['buyers','sellers','seller_policies','products','orders','listing_flags','auctions','bids','feedback','disputes','culture_posts','social_posts','settings']); data=table(choice); st.dataframe(data,use_container_width=True); st.download_button('Download CSV',data.to_csv(index=False),f'{choice}.csv')
+    with tabs[11]: st.markdown('Business plan, budget, revenue model, policy summary, buyer policy, seller policy, and roadmap are included as files in this V15 package.')
 
-    with tabs[11]:
-        st.subheader("Cleanup")
-        if st.button("Delete sample inventory"):
-            for sku in ["VIN-0001","VIN-0002","VIN-0003","CD-0001","MER-0001"]:
-                q("DELETE FROM inventory WHERE sku = ?", (sku,))
-            st.success("Samples deleted.")
-        confirm = st.text_input("Type DELETE ALL to wipe all app data")
-        if st.button("Reset entire app"):
-            if confirm == "DELETE ALL":
-                for t in ["inventory","media_assets","internet_media_links","sellers","orders","expenses","hold_requests","store_settings"]:
-                    q(f"DELETE FROM {t}")
-                st.success("App reset.")
-            else:
-                st.error("Type DELETE ALL exactly.")
-
-    with tabs[12]:
-        st.subheader("Reports")
-        report = st.selectbox("Report", ["inventory","media_assets","sellers","orders","expenses","hold_requests"])
-        df = table(report)
-        st.dataframe(df, use_container_width=True)
-        if not df.empty:
-            st.download_button("Download CSV", df.to_csv(index=False), f"{report}.csv", "text/csv")
+st.set_page_config(page_title='House Of Wax Marketplace',layout='wide')
+menu=st.sidebar.radio('House Of Wax',['Home','Marketplace','Auctions','Seller Stores','Music + Culture','Register / Sell','Seller Dashboard','Admin Login'])
+if menu=='Home':
+    header(); st.markdown('## Seller-powered music and culture marketplace'); st.write('House Of Wax is a platform where approved sellers create their own stores, upload products, set prices, ship orders, and handle customer service. House Of Wax manages rules, ratings, flagged listings, buyer/seller accountability, culture content, and auction access.');
+    c1,c2,c3=st.columns(3); c1.metric('Active listings',len(df("SELECT * FROM products WHERE listing_status='Active'"))); c2.metric('Approved sellers',len(df("SELECT * FROM sellers WHERE status='Approved'"))); c3.metric('Registered buyers',len(table('buyers')))
+elif menu=='Marketplace': marketplace()
+elif menu=='Auctions': auctions()
+elif menu=='Seller Stores': stores()
+elif menu=='Music + Culture': culture()
+elif menu=='Register / Sell': register()
+elif menu=='Seller Dashboard': seller_dash()
+elif menu=='Admin Login': admin()
