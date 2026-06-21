@@ -1,3 +1,3 @@
 # REVENUE MODEL DRAFT
 
-Updated for V15.7 testing unlocked. The priority is fast user testing before production hardening.
+Updated for V16 full testing rebuild.

@@ -1,15 +1,10 @@
-# Quick Start V15.8.2
+# Quick Start V16.1
 
-Upload first:
+1. Upload `app.py`, `requirements.txt`, and `runtime.txt`.
+2. Reboot Streamlit.
+3. Confirm:
 
-- app.py
-- requirements.txt
-- runtime.txt
+`Running V16.1 SETTINGS STARTUP FIX`
 
-Reboot Streamlit.
-
-Confirm:
-
-`Running V15.8.2 NO BUYER BLOCKER FIX`
-
-Then test Buyer Dashboard and Marketplace request flow.
+4. Go to Test Setup.
+5. Click Create/repair demo buyer, seller, and product.

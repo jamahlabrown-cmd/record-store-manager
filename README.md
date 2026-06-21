@@ -1,31 +1,39 @@
-# House Of Wax V15.8.2 No Buyer Blocker Fix
+# House Of Wax V16.1 Settings Startup Fix
 
-This patch removes the repeated testing blocker:
-
-`Buyer not found. Use Test Setup`
+This fixes the startup crash caused by an old/corrupt `settings` table in Streamlit's SQLite database.
 
 You should see:
 
-`Running V15.8.2 NO BUYER BLOCKER FIX`
+`Running V16.1 SETTINGS STARTUP FIX`
 
 ## Fixed
 
-- Buyer Dashboard no longer fails just because an exact email is missing.
-- Buyer Dashboard lets you choose an existing buyer.
-- Buyer Dashboard can create/open a buyer by email instantly.
-- If no buyer exists, the app creates a demo buyer automatically.
-- Buyer pickers throughout the app no longer block the flow.
-- The old “Buyer not found. Use Test Setup” message was removed.
+- App no longer writes to the old `settings` table.
+- New safe table: `app_settings`
+- Startup settings cannot crash the app if an old database exists.
+- Keeps the V16 full testing features:
+  - buyer dashboard
+  - seller dashboard
+  - seller stores
+  - barcode scanner/input
+  - barcode/catalog/matrix product fields
+  - public seller feedback
+  - public buyer trust profiles
+  - product upload
+  - bulk import
+  - messages
+  - announcements
+  - events/drops
+  - badges
+  - auctions
+  - admin reports
 
-## Demo Buyer
+## Upload
 
-`buyer@test.com`
+Upload only these first:
 
-## What to test
+- app.py
+- requirements.txt
+- runtime.txt
 
-1. Go to Buyer Dashboard.
-2. Choose existing buyer or create/open by email.
-3. Go to Marketplace.
-4. Open a product.
-5. Submit Request to Buy.
-6. Confirm it does not block on buyer missing.
+Then reboot Streamlit.

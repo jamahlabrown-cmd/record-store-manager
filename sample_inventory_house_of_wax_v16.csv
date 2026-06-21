@@ -1,0 +1,2 @@
+sku,barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url
+DEMO-CSV-001,602547234567,CAT-001,A1/B1,Vinyl Records,Demo Artist,Demo Album,Vinyl,Demo Label,1978,Soul,VG+,VG,Light sleeve wear,Sample CSV barcode item.,24.99,1,5.00,
