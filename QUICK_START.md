@@ -1,10 +1,15 @@
-# Quick Start V16.1
+# Quick Start V16.3
 
-1. Upload `app.py`, `requirements.txt`, and `runtime.txt`.
-2. Reboot Streamlit.
-3. Confirm:
+1. Download the direct `app.py` file.
+2. In GitHub, open the repository root.
+3. Click the existing `app.py`.
+4. Click the pencil/edit button.
+5. Select all old code.
+6. Delete it.
+7. Paste the new `app.py` code.
+8. Commit changes.
+9. Reboot Streamlit.
 
-`Running V16.1 SETTINGS STARTUP FIX`
+Confirm the top says:
 
-4. Go to Test Setup.
-5. Click Create/repair demo buyer, seller, and product.
+`Running V16.3 ROOT APP DEPLOY FIX`

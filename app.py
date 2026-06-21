@@ -1,4 +1,5 @@
 
+# ROOT APP DEPLOY FIX — upload THIS app.py to the repository root, replacing the old root app.py.
 import sqlite3
 from pathlib import Path
 from datetime import datetime
@@ -6,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V16.1 SETTINGS STARTUP FIX'
+APP_VERSION='V16.3 ROOT APP DEPLOY FIX'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -50,7 +51,9 @@ def setting(k,d=''):
         return d if r.empty else safe(r.iloc[0]['value'],d)
     except Exception:
         return d
-def set_setting(k,v): run('INSERT OR REPLACE INTO app_app_settings(key,value) VALUES(?,?)',(k,str(v)))
+def set_setting(k,v):
+    run('CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY,value TEXT)')
+    run('INSERT OR REPLACE INTO app_settings(key,value) VALUES(?,?)',(k,str(v)))
 def email_exists(t,email):
     return bool(email) and not df(f'SELECT id FROM {t} WHERE lower(email)=lower(?)',(email.strip(),)).empty
 

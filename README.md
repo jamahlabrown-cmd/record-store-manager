@@ -1,39 +1,36 @@
-# House Of Wax V16.1 Settings Startup Fix
+# House Of Wax V16.3 Root App Deploy Fix
 
-This fixes the startup crash caused by an old/corrupt `settings` table in Streamlit's SQLite database.
+This package fixes the deployment confusion.
+
+The previous traceback proves Streamlit was still running an old root `app.py` that contained:
+
+`app_app_settings`
+
+This V16.3 package contains a clean root `app.py` with:
+
+`app_settings`
+
+and no `app_app_settings`.
 
 You should see:
 
-`Running V16.1 SETTINGS STARTUP FIX`
+`Running V16.3 ROOT APP DEPLOY FIX`
 
-## Fixed
+## Critical upload instruction
 
-- App no longer writes to the old `settings` table.
-- New safe table: `app_settings`
-- Startup settings cannot crash the app if an old database exists.
-- Keeps the V16 full testing features:
-  - buyer dashboard
-  - seller dashboard
-  - seller stores
-  - barcode scanner/input
-  - barcode/catalog/matrix product fields
-  - public seller feedback
-  - public buyer trust profiles
-  - product upload
-  - bulk import
-  - messages
-  - announcements
-  - events/drops
-  - badges
-  - auctions
-  - admin reports
+Do not upload the folder as a folder.
 
-## Upload
+Replace the repository root file:
 
-Upload only these first:
+`app.py`
 
-- app.py
+with the new `app.py`.
+
+Then upload:
+
 - requirements.txt
 - runtime.txt
 
 Then reboot Streamlit.
+
+If Streamlit still shows the old `app_app_settings` traceback, the root `app.py` was not replaced.
