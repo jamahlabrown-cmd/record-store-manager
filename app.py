@@ -7,7 +7,7 @@ import streamlit as st
 
 st.set_page_config(page_title="House Of Wax Marketplace", page_icon="🎧", layout="wide")
 
-APP_VERSION = "V15.6 COMMUNITY MOMENTUM PATCH"
+APP_VERSION = "V15.6 LITE UPLOAD SAFE PATCH"
 APP_NAME = "House Of Wax"
 DB = Path("house_of_wax_v15_5.db")
 MEDIA_DIR = Path("house_of_wax_uploads")
@@ -84,7 +84,6 @@ def run_sql(sql, params=()):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             seller_id INTEGER,
             badge_name TEXT,
-            badge_type TEXT,
             active TEXT DEFAULT 'Yes',
             created_at TEXT
         )
@@ -97,29 +96,6 @@ def run_sql(sql, params=()):
             title TEXT,
             body TEXT,
             status TEXT DEFAULT 'Active',
-            created_at TEXT
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS seller_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            seller_id INTEGER,
-            event_title TEXT,
-            event_type TEXT,
-            event_date TEXT,
-            description TEXT,
-            status TEXT DEFAULT 'Active',
-            created_at TEXT
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS product_gallery (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id INTEGER,
-            image_url TEXT,
-            caption TEXT,
             created_at TEXT
         )
     """)
@@ -636,18 +612,16 @@ House Of Wax Team
 
 
 
-def get_seller_badges(seller_id):
-    badges = get_df("SELECT * FROM seller_badges WHERE seller_id=? AND active='Yes' ORDER BY created_at DESC", (int(seller_id),))
-    if badges.empty:
-        return ""
-    return " • ".join([safe(x) for x in badges["badge_name"].tolist()])
-
-
 def follower_count(seller_id):
     df = get_df("SELECT COUNT(*) AS count FROM seller_followers WHERE seller_id=?", (int(seller_id),))
+    return 0 if df.empty else int(df.iloc[0]["count"] or 0)
+
+
+def seller_badges_text(seller_id):
+    df = get_df("SELECT badge_name FROM seller_badges WHERE seller_id=? AND active='Yes' ORDER BY created_at DESC", (int(seller_id),))
     if df.empty:
-        return 0
-    return int(df.iloc[0]["count"] or 0)
+        return ""
+    return " • ".join([safe(x) for x in df["badge_name"].tolist()])
 
 
 def send_message(product_id, seller_id, buyer_id, sender_type, subject, message):
@@ -657,18 +631,12 @@ def send_message(product_id, seller_id, buyer_id, sender_type, subject, message)
     """, (product_id, seller_id, buyer_id, sender_type, subject, message, now()))
 
 
-def create_seller_spotlight(seller_id):
+def create_seller_spotlight_post(seller_id):
     seller = get_seller(seller_id)
     if seller is None:
         return False
     title = f"Seller Spotlight: {safe(seller.get('store_name'))}"
-    body = f"""Meet {safe(seller.get('store_name'))}, part of the House Of Wax seller community.
-
-{safe(seller.get('seller_story'), safe(seller.get('store_bio'), 'This seller is building their presence on House Of Wax.'))}
-
-Specialties: {safe(seller.get('specialties'), 'Music, culture, and collector goods.')}
-
-House Of Wax is built to help buyers connect with the people behind the products, not just the listings."""
+    body = f"Meet {safe(seller.get('store_name'))}, part of the House Of Wax community.\n\n{safe(seller.get('seller_story'), safe(seller.get('store_bio'), 'This seller is building their presence on House Of Wax.'))}\n\nSpecialties: {safe(seller.get('specialties'), 'Music, culture, and collector goods.')}"
     image = safe(seller.get("banner_url")) or safe(seller.get("logo_url"))
     run_sql("""
         INSERT INTO culture_posts (title, category, author, body, image_url, status, created_at)
@@ -728,7 +696,7 @@ def seller_card(seller):
         with col2:
             st.subheader(safe(seller.get("store_name")))
             st.caption(f"{safe(seller.get('seller_level'))} • Rating {seller['rating']}% • Sales {seller['completed_sales']} • Followers {follower_count(int(seller['id']))}")
-            badges = get_seller_badges(int(seller["id"]))
+            badges = seller_badges_text(int(seller["id"]))
             if badges:
                 st.caption(f"Badges: {badges}")
             st.write(safe(seller.get("store_bio"), "Independent seller on House Of Wax."))
@@ -783,11 +751,7 @@ def seller_profile_page(seller_id):
             st.markdown("## 🏪")
     with col2:
         st.title(safe(seller.get("store_name")))
-        verified = "✅ Verified Seller" if safe(seller.get("status")) in ["Verified", "Approved"] and float(seller["rating"] or 0) >= 95 else safe(seller.get("seller_level"))
-        st.caption(f"{verified} • Rating {seller['rating']}% • Sales {seller['completed_sales']} • Followers {follower_count(int(seller['id']))}")
-        badges = get_seller_badges(int(seller["id"]))
-        if badges:
-            st.caption(f"Community badges: {badges}")
+        st.caption(f"{safe(seller.get('seller_level'))} • Rating {seller['rating']}% • Sales {seller['completed_sales']}")
         location = " ".join([safe(seller.get("city")), safe(seller.get("state"))]).strip()
         if location:
             st.caption(location)
@@ -796,9 +760,13 @@ def seller_profile_page(seller_id):
         if safe(seller.get("website")):
             st.link_button("Seller Website", safe(seller.get("website")))
 
+    badges = seller_badges_text(int(seller["id"]))
+    if badges:
+        st.info(f"Community badges: {badges}")
+
     with st.expander("Follow this seller"):
         buyer_id = choose_buyer(f"follow_seller_{int(seller['id'])}")
-        if st.button("Follow Seller", key=f"follow_btn_{int(seller['id'])}"):
+        if st.button("Follow Seller", key=f"follow_seller_btn_{int(seller['id'])}"):
             if buyer_id:
                 existing = get_df("SELECT id FROM seller_followers WHERE seller_id=? AND buyer_id=?", (int(seller["id"]), int(buyer_id)))
                 if existing.empty:
@@ -814,15 +782,6 @@ def seller_profile_page(seller_id):
             with st.container(border=True):
                 st.write(f"**{safe(ann.get('title'))}**")
                 st.write(safe(ann.get("body")))
-
-    events = get_df("SELECT * FROM seller_events WHERE seller_id=? AND status='Active' ORDER BY event_date", (int(seller["id"]),))
-    if not events.empty:
-        st.subheader("Upcoming Drops / Events")
-        for _, ev in events.iterrows():
-            with st.container(border=True):
-                st.write(f"**{safe(ev.get('event_title'))}** — {safe(ev.get('event_type'))}")
-                st.caption(safe(ev.get("event_date")))
-                st.write(safe(ev.get("description")))
 
     st.subheader("About This Seller")
     st.write(safe(seller.get("seller_story"), safe(seller.get("store_bio"), "This seller has not added a full story yet.")))
@@ -890,12 +849,6 @@ def product_detail(product):
             st.markdown("## 🎵")
         if audio:
             st.audio(audio)
-        gallery = get_df("SELECT * FROM product_gallery WHERE product_id=? ORDER BY created_at DESC", (int(product["id"]),))
-        if not gallery.empty:
-            st.subheader("Product Gallery")
-            for _, img in gallery.iterrows():
-                if safe(img.get("image_url")):
-                    st.image(safe(img.get("image_url")), caption=safe(img.get("caption")), use_container_width=True)
 
     with right:
         st.header(f"{safe(product.get('artist'))} — {safe(product.get('title'))}")
@@ -1338,7 +1291,7 @@ def seller_dashboard_page():
 def seller_workspace(seller):
     seller_id = int(seller["id"])
     st.success(f"Logged in as {seller['store_name']}")
-    tabs = st.tabs(["My Store Profile", "Store Policies", "Upload Products", "Product Gallery", "Bulk Product Import", "My Listings", "My Auctions", "Orders", "Messages", "Announcements", "Events/Drops", "Leave Buyer Feedback", "Feedback Received", "Social Posts", "Rules"])
+    tabs = st.tabs(["My Store Profile", "Store Policies", "Upload Products", "Bulk Product Import", "My Listings", "My Auctions", "Orders", "Messages", "Store Announcements", "Leave Buyer Feedback", "Feedback Received", "Social Posts", "Rules"])
 
     with tabs[0]:
         st.subheader("My Store Profile")
@@ -1444,26 +1397,6 @@ def seller_workspace(seller):
             st.success("Product uploaded. Approved sellers can publish fixed-price products without manual product approval.")
 
     with tabs[3]:
-        st.subheader("Product Gallery")
-        products = get_df("SELECT * FROM products WHERE seller_id=? ORDER BY created_at DESC", (seller_id,))
-        if products.empty:
-            st.info("Upload a product first.")
-        else:
-            product_id = st.selectbox("Choose product", products["id"].tolist(), key="gallery_product")
-            image_file = st.file_uploader("Upload gallery image", type=["png", "jpg", "jpeg", "webp"], key="gallery_image")
-            image_url = st.text_input("Or paste image URL", key="gallery_image_url")
-            caption = st.text_input("Caption", key="gallery_caption")
-            if st.button("Add Gallery Image"):
-                saved = save_uploaded_file(image_file, "product_gallery") or image_url
-                if saved:
-                    run_sql("INSERT INTO product_gallery (product_id, image_url, caption, created_at) VALUES (?, ?, ?, ?)", (int(product_id), saved, caption, now()))
-                    st.success("Gallery image added.")
-                else:
-                    st.error("Upload an image or paste an image URL.")
-            existing = get_df("SELECT * FROM product_gallery WHERE product_id=? ORDER BY created_at DESC", (int(product_id),))
-            st.dataframe(existing, use_container_width=True)
-
-    with tabs[4]:
         st.subheader("Bulk Product Import")
         st.write("Upload a CSV with columns like artist, title, category, format, price, quantity, image_url, and condition fields.")
         csv_file = st.file_uploader("Upload product CSV", type=["csv"], key="bulk_csv")
@@ -1511,7 +1444,7 @@ def seller_workspace(seller):
             except Exception as error:
                 st.error(f"Could not read/import CSV: {error}")
 
-    with tabs[5]:
+    with tabs[4]:
         st.subheader("My Listings")
         products = get_df("SELECT * FROM products WHERE seller_id=? ORDER BY created_at DESC", (seller_id,))
         st.dataframe(products, use_container_width=True)
@@ -1522,7 +1455,7 @@ def seller_workspace(seller):
                 run_sql("UPDATE products SET listing_status=?, updated_at=? WHERE id=? AND seller_id=?", (new_status, now(), int(product_id), seller_id))
                 st.success("Listing status updated.")
 
-    with tabs[6]:
+    with tabs[5]:
         st.subheader("My Auctions")
         eligible, reason = auction_eligible(seller)
         st.info(f"Auction eligibility: {'Yes' if eligible else 'No'} — {reason}")
@@ -1552,7 +1485,7 @@ def seller_workspace(seller):
                 st.success("Auction saved.")
         st.dataframe(get_df("SELECT * FROM auctions WHERE seller_id=?", (seller_id,)), use_container_width=True)
 
-    with tabs[7]:
+    with tabs[6]:
         st.subheader("Orders")
         orders = get_df("""
             SELECT o.*, b.name AS buyer_name, b.email AS buyer_email, b.status AS buyer_status, b.rating AS buyer_rating,
@@ -1580,7 +1513,7 @@ def seller_workspace(seller):
                 run_sql("UPDATE orders SET status='Cancelled', updated_at=? WHERE id=? AND seller_id=?", (now(), int(order_id), seller_id))
                 st.warning("Buyer marked as non-paying.")
 
-    with tabs[8]:
+    with tabs[7]:
         st.subheader("Messages")
         messages = get_df("""
             SELECT m.*, b.name AS buyer_name, b.email AS buyer_email, p.artist, p.title
@@ -1592,17 +1525,12 @@ def seller_workspace(seller):
         """, (seller_id,))
         st.dataframe(messages, use_container_width=True)
         if not messages.empty:
-            message_id = st.selectbox("Message ID", messages["id"].tolist(), key="seller_message_id")
-            selected = messages[messages["id"] == message_id].iloc[0]
-            st.write(f"**From:** {safe(selected.get('buyer_name'))} | {safe(selected.get('buyer_email'))}")
-            st.write(f"**Subject:** {safe(selected.get('subject'))}")
-            st.write(safe(selected.get("message")))
-            reply = st.text_area("Reply / internal response note", key="seller_reply_text")
+            msg_id = st.selectbox("Message ID", messages["id"].tolist(), key="seller_message")
             if st.button("Mark Message Responded"):
-                run_sql("UPDATE messages SET status='Responded' WHERE id=?", (int(message_id),))
+                run_sql("UPDATE messages SET status='Responded' WHERE id=?", (int(msg_id),))
                 st.success("Message marked responded.")
 
-    with tabs[9]:
+    with tabs[8]:
         st.subheader("Store Announcements")
         with st.form("announcement_form"):
             title = st.text_input("Announcement title")
@@ -1614,21 +1542,7 @@ def seller_workspace(seller):
             st.success("Announcement saved.")
         st.dataframe(get_df("SELECT * FROM store_announcements WHERE seller_id=? ORDER BY created_at DESC", (seller_id,)), use_container_width=True)
 
-    with tabs[10]:
-        st.subheader("Events / Drops Calendar")
-        with st.form("event_form"):
-            event_title = st.text_input("Event/drop title")
-            event_type = st.selectbox("Type", ["Record Drop", "Auction Drop", "Store Sale", "Live Event", "New Arrival Batch", "Other"])
-            event_date = st.text_input("Date", placeholder="Example: 2026-07-01 7:00 PM")
-            description = st.text_area("Description")
-            status = st.selectbox("Status", ["Active", "Inactive"])
-            submitted = st.form_submit_button("Save Event/Drop")
-        if submitted:
-            run_sql("INSERT INTO seller_events (seller_id, event_title, event_type, event_date, description, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (seller_id, event_title, event_type, event_date, description, status, now()))
-            st.success("Event/drop saved.")
-        st.dataframe(get_df("SELECT * FROM seller_events WHERE seller_id=? ORDER BY event_date", (seller_id,)), use_container_width=True)
-
-    with tabs[11]:
+    with tabs[9]:
         st.subheader("Leave Buyer Feedback")
         completed = get_df("""
             SELECT o.*, b.name AS buyer_name, b.email AS buyer_email, p.artist, p.title
@@ -1658,7 +1572,7 @@ def seller_workspace(seller):
                     recalculate_rating("Buyer", int(row["buyer_id"]))
                     st.success("Buyer feedback submitted.")
 
-    with tabs[12]:
+    with tabs[10]:
         st.subheader("Feedback Received")
         received = get_df("""
             SELECT f.*, b.name AS buyer_name
@@ -1669,7 +1583,7 @@ def seller_workspace(seller):
         """, (seller_id,))
         st.dataframe(received, use_container_width=True)
 
-    with tabs[13]:
+    with tabs[11]:
         st.subheader("Social Posts")
         products = get_df("SELECT * FROM products WHERE seller_id=?", (seller_id,))
         if products.empty:
@@ -1686,7 +1600,7 @@ def seller_workspace(seller):
                 run_sql("INSERT INTO social_posts (product_id, seller_id, platform, caption, hashtags, status, created_at) VALUES (?, ?, ?, ?, ?, 'Draft', ?)", (int(product_id), seller_id, platform, caption, hashtags, now()))
                 st.success("Social draft saved.")
 
-    with tabs[14]:
+    with tabs[12]:
         st.markdown("Sellers can create their own store policies and identity, but House Of Wax platform rules are the minimum standard.")
 
 
@@ -1709,7 +1623,7 @@ def admin_page():
 
 
 def admin_workspace():
-    tabs = st.tabs(["Overview","Seller Applications","Seller Management","Buyer Management","Flagged Listings","Seller Reports","Orders","Feedback","Messages","Community Tools","Auctions","Culture Content","Platform Rules","Fees & Settings","Reports","Testing Cleanup","Business Planning"])
+    tabs = st.tabs(["Overview","Seller Applications","Seller Management","Buyer Management","Flagged Listings","Seller Reports","Orders","Feedback","Community Tools","Auctions","Culture Content","Platform Rules","Fees & Settings","Reports","Testing Cleanup","Business Planning"])
 
     with tabs[0]:
         sellers, buyers, products, orders = get_table("sellers"), get_table("buyers"), get_table("products"), get_table("orders")
@@ -1813,50 +1727,28 @@ def admin_workspace():
         st.dataframe(get_table("feedback"), use_container_width=True)
 
     with tabs[8]:
-        st.subheader("Messages")
-        st.dataframe(get_table("messages"), use_container_width=True)
-
-    with tabs[9]:
         st.subheader("Community Tools")
         sellers = get_table("sellers")
         if sellers.empty:
             st.info("No sellers yet.")
         else:
             seller_id = st.selectbox("Seller", sellers["id"].tolist(), key="community_seller")
-            seller = sellers[sellers["id"] == seller_id].iloc[0]
-
-            st.markdown("### Badges")
-            badge = st.text_input("Badge name", placeholder="Example: Soul Specialist, Verified Seller, Jazz Dealer")
-            badge_type = st.selectbox("Badge type", ["Community", "Verified", "Specialty", "Performance", "Culture"])
-            if st.button("Add Seller Badge"):
-                run_sql("INSERT INTO seller_badges (seller_id, badge_name, badge_type, active, created_at) VALUES (?, ?, ?, 'Yes', ?)", (int(seller_id), badge, badge_type, now()))
+            badge = st.text_input("Add badge", placeholder="Example: Soul Specialist, Jazz Dealer, Verified Seller")
+            if st.button("Add Badge"):
+                run_sql("INSERT INTO seller_badges (seller_id, badge_name, active, created_at) VALUES (?, ?, 'Yes', ?)", (int(seller_id), badge, now()))
                 st.success("Badge added.")
-
-            st.markdown("### Seller Spotlight")
-            if st.button("Create Seller Spotlight Culture Post"):
-                if create_seller_spotlight(int(seller_id)):
+            if st.button("Create Seller Spotlight Post"):
+                if create_seller_spotlight_post(int(seller_id)):
                     st.success("Seller spotlight post created in Music + Culture.")
+        st.subheader("Messages")
+        st.dataframe(get_table("messages"), use_container_width=True)
+        st.subheader("Followers")
+        st.dataframe(get_table("seller_followers"), use_container_width=True)
 
-            st.markdown("### Store Announcements")
-            st.dataframe(get_df("SELECT * FROM store_announcements WHERE seller_id=? ORDER BY created_at DESC", (int(seller_id),)), use_container_width=True)
-
-            st.markdown("### Events / Drops")
-            st.dataframe(get_df("SELECT * FROM seller_events WHERE seller_id=? ORDER BY event_date", (int(seller_id),)), use_container_width=True)
-
-            st.markdown("### Followers")
-            followers = get_df("""
-                SELECT f.*, b.name, b.email
-                FROM seller_followers f
-                LEFT JOIN buyers b ON f.buyer_id=b.id
-                WHERE f.seller_id=?
-                ORDER BY f.created_at DESC
-            """, (int(seller_id),))
-            st.dataframe(followers, use_container_width=True)
-
-    with tabs[10]:
+    with tabs[9]:
         st.dataframe(get_table("auctions"), use_container_width=True)
 
-    with tabs[11]:
+    with tabs[10]:
         st.subheader("Culture Content")
         with st.form("culture_form"):
             title = st.text_input("Title")
@@ -1872,7 +1764,7 @@ def admin_workspace():
             st.success("Culture post published.")
         st.dataframe(get_table("culture_posts"), use_container_width=True)
 
-    with tabs[12]:
+    with tabs[11]:
         rules = get_table("platform_rules")
         st.dataframe(rules, use_container_width=True)
         with st.form("rule_form"):
@@ -1885,7 +1777,7 @@ def admin_workspace():
             run_sql("INSERT INTO platform_rules (title, category, rule_text, active, created_at) VALUES (?, ?, ?, ?, ?)", (title, category, text, active, now()))
             st.success("Rule added.")
 
-    with tabs[13]:
+    with tabs[12]:
         with st.form("settings_form"):
             commission = st.text_input("Platform commission %", value=get_setting("platform_commission_percent", "9"))
             auction_commission = st.text_input("Auction commission %", value=get_setting("auction_commission_percent", "10"))
@@ -1901,8 +1793,8 @@ def admin_workspace():
                 save_setting(k,v)
             st.success("Settings saved.")
 
-    with tabs[14]:
-        report = st.selectbox("Report", ["sellers","seller_policies","buyers","products","orders","feedback","listing_flags","seller_reports","favorites","auctions","bids","culture_posts","disputes","social_posts","platform_rules","seller_notifications","messages","seller_followers","seller_badges","store_announcements","seller_events","product_gallery"])
+    with tabs[13]:
+        report = st.selectbox("Report", ["sellers","seller_policies","buyers","products","orders","feedback","listing_flags","seller_reports","favorites","auctions","bids","culture_posts","disputes","social_posts","platform_rules","seller_notifications","messages","seller_followers","seller_badges","store_announcements"])
         data = get_table(report)
         st.dataframe(data, use_container_width=True)
         st.download_button("Download CSV", data.to_csv(index=False), file_name=f"{report}.csv")
@@ -1910,9 +1802,9 @@ def admin_workspace():
             orders = get_table("orders")
             st.metric("Estimated Platform Fees", money(orders["platform_fee"].sum()))
 
-    with tabs[15]:
+    with tabs[14]:
         st.warning("Use testing cleanup carefully. Deletes cannot be undone.")
-        table_name = st.selectbox("Table to clean", ["buyers","sellers","products","orders","feedback","listing_flags","seller_reports","favorites","auctions","bids","culture_posts","disputes","social_posts","seller_notifications","messages","seller_followers","seller_badges","store_announcements","seller_events","product_gallery"])
+        table_name = st.selectbox("Table to clean", ["buyers","sellers","products","orders","feedback","listing_flags","seller_reports","favorites","auctions","bids","culture_posts","disputes","social_posts","seller_notifications","messages","seller_followers","seller_badges","store_announcements"])
         rows = get_table(table_name)
         st.dataframe(rows, use_container_width=True)
         if not rows.empty:
@@ -1925,7 +1817,7 @@ def admin_workspace():
                 else:
                     st.error("Check confirmation first.")
 
-    with tabs[16]:
+    with tabs[15]:
         st.markdown("Updated planning files are included in this ZIP.")
 
 
