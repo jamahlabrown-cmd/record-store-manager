@@ -6,3 +6,8 @@ Set Streamlit Secrets:
 ```toml
 ADMIN_PASSWORD = "your-private-password"
 ```
+
+
+## Fixed build note
+
+This package patches the original V15 build by placing `st.set_page_config` at the beginning of the app and making Streamlit Secrets loading safer for local/Codespaces testing.
