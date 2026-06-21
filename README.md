@@ -1,52 +1,27 @@
-# House Of Wax V15.7 Testing Unlocked
+# House Of Wax V15.8 Barcode + Public Trust Patch
 
-This version is made specifically so every major option is active for testing.
+This version adds back barcode inventory tools and makes feedback publicly visible for trust and transparency.
 
 You should see:
 
-`Running V15.7 TESTING UNLOCKED`
+`Running V15.8 BARCODE + PUBLIC TRUST PATCH`
 
-## Important Fix
+## New / Restored
 
-The database name is now stable:
+- Barcode / UPC / EAN fields on product upload
+- Catalog number and matrix/runout fields
+- Seller Dashboard tab: Barcode Scanner
+- Sellers can scan/type/paste barcodes and quick-add inventory
+- Barcode quick-add can reuse existing known inventory details
+- Bulk CSV import supports barcode, catalog_number, label, and release_year
+- Product pages show barcode, catalog number, and matrix/runout
+- Seller public profiles show public seller feedback
+- Buyer Dashboard shows public buyer feedback
+- Sellers can view a buyer public trust profile from orders
+- Feedback is treated as public marketplace trust information
 
-`house_of_wax.db`
+## Important Barcode Note
 
-That prevents buyer/seller profiles from disappearing every time we change versions.
+In this Streamlit prototype, scanning works best with a USB/Bluetooth barcode scanner or phone keyboard scanner. Most scanners act like a keyboard and enter the barcode into the text box automatically.
 
-The app also tries to recover older test DB files automatically if it finds them.
-
-## Testing Features Unlocked
-
-- Test Setup page creates demo buyer/seller/product
-- Seller store creation is active immediately
-- Seller Dashboard is active for testing
-- Product upload is active
-- Bulk CSV import is active
-- Product gallery is active
-- Seller profile, logo, banner, story, specialties are active
-- Buyer dashboard is active
-- Messaging is active
-- Favorites are active
-- Follow seller is active
-- Store announcements are active
-- Events/drops are active
-- Badges are active
-- Seller spotlight posts are active
-- Auctions are unlocked
-- Admin can enter without password if no password is set
-- Admin cleanup tools are active
-
-## Demo Credentials
-
-Buyer:
-
-`buyer@test.com`
-
-Seller:
-
-`seller@test.com`
-
-Seller access code:
-
-`test123`
+A production version should use a real camera barcode scanner and external music database lookups.

@@ -8,7 +8,7 @@ import streamlit as st
 
 st.set_page_config(page_title="House Of Wax Marketplace", page_icon="🎧", layout="wide")
 
-APP_VERSION = "V15.7 TESTING UNLOCKED"
+APP_VERSION = "V15.8 BARCODE + PUBLIC TRUST PATCH"
 APP_NAME = "House Of Wax"
 TEST_MODE = True
 
@@ -643,9 +643,71 @@ def seed_demo_data():
         run_sql("""
             INSERT INTO products
             (seller_id,sku,barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,listing_status,listing_type,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (sid, "DEMO-001", "123456789", "CAT-001", "A1/B1", "Vinyl Records", "Demo Artist", "Demo Album", "Vinyl", "Demo Label", "1978", "Soul", "VG+", "VG", "Light sleeve wear. Plays strong.", "Demo product for testing House Of Wax.", 24.99, 1, 5.00, "", "Active", "Fixed Price", now(), now()))
 
+
+
+
+def product_lookup_by_barcode(barcode):
+    barcode = safe(barcode).strip()
+    if not barcode:
+        return {}
+    df = get_df("SELECT * FROM products WHERE barcode = ? ORDER BY created_at DESC LIMIT 1", (barcode,))
+    if df.empty:
+        return {}
+    row = df.iloc[0].to_dict()
+    return {
+        "artist": safe(row.get("artist")),
+        "title": safe(row.get("title")),
+        "format": safe(row.get("format")),
+        "label": safe(row.get("label")),
+        "release_year": safe(row.get("release_year")),
+        "genre": safe(row.get("genre")),
+        "category": safe(row.get("category")),
+        "catalog_number": safe(row.get("catalog_number")),
+    }
+
+
+def public_feedback_summary(reviewee_type, reviewee_id):
+    feedback = get_df("""
+        SELECT * FROM feedback
+        WHERE reviewee_type=? AND reviewee_id=?
+        ORDER BY created_at DESC
+    """, (reviewee_type, int(reviewee_id)))
+    if feedback.empty:
+        st.info("No public feedback yet.")
+        return
+    avg = feedback["rating"].mean()
+    st.metric("Public Feedback Score", f"{round(avg, 2)} / 5")
+    for _, row in feedback.iterrows():
+        with st.container(border=True):
+            st.write(f"⭐ **{row['rating']} / 5**")
+            st.caption(f"From {safe(row.get('reviewer_type'))} • {safe(row.get('created_at'))}")
+            st.write(safe(row.get("comment"), "No comment provided."))
+
+
+def buyer_public_profile(buyer_id):
+    buyer = get_buyer(buyer_id)
+    if buyer is None:
+        st.error("Buyer not found.")
+        return
+    st.subheader(f"Buyer Profile: {safe(buyer.get('name'))}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Status", safe(buyer.get("status")))
+    c2.metric("Rating", f"{buyer.get('rating')}%")
+    c3.metric("Completed Purchases", buyer.get("completed_purchases"))
+    c4.metric("Unpaid Orders", buyer.get("unpaid_orders"))
+    st.write(f"**City:** {safe(buyer.get('city'), 'Not listed')}")
+    st.subheader("Public Buyer Feedback")
+    public_feedback_summary("Buyer", int(buyer_id))
+
+
+def seller_public_profile_link_button(seller_id, key_suffix):
+    if st.button("View Seller Public Profile", key=f"public_seller_{seller_id}_{key_suffix}"):
+        st.session_state["selected_seller_id"] = int(seller_id)
+        st.session_state.pop("selected_product_id", None)
+        st.rerun()
 
 # -----------------------------
 # UI helpers
@@ -797,7 +859,10 @@ def seller_profile_page(seller_id):
         st.subheader("Specialties")
         st.write(safe(seller.get("specialties")))
 
-    st.subheader("Seller Listings")
+    st.subheader("Public Seller Feedback")
+    public_feedback_summary("Seller", seller_id)
+
+    st.subheader("Seller Listings / Public Inventory")
     products = get_df("SELECT * FROM products WHERE seller_id=? AND listing_status IN ('Active','Draft') ORDER BY created_at DESC", (seller_id,))
     if products.empty:
         st.info("No listings yet.")
@@ -839,6 +904,12 @@ def product_detail(product):
                 st.session_state.pop("selected_product_id", None)
                 st.rerun()
         st.write(f"**Category:** {safe(product.get('category'))}")
+        if safe(product.get("barcode")):
+            st.write(f"**Barcode / UPC:** {safe(product.get('barcode'))}")
+        if safe(product.get("catalog_number")):
+            st.write(f"**Catalog #:** {safe(product.get('catalog_number'))}")
+        if safe(product.get("matrix_runout")):
+            st.write(f"**Matrix / Runout:** {safe(product.get('matrix_runout'))}")
         st.write(f"**Condition:** {safe(product.get('media_grade'))} / {safe(product.get('sleeve_grade'))}")
 
     st.subheader("Description")
@@ -1065,7 +1136,8 @@ def buyer_dashboard_page():
                 recalculate_rating("Seller", int(order["seller_id"]))
                 st.success("Feedback submitted.")
     with tabs[6]:
-        st.dataframe(get_df("SELECT * FROM feedback WHERE reviewee_type='Buyer' AND reviewee_id=?", (buyer_id,)), use_container_width=True)
+        st.subheader("Public Feedback Visible to Everyone")
+        public_feedback_summary("Buyer", buyer_id)
 
 
 def seller_dashboard_page():
@@ -1082,7 +1154,7 @@ def seller_dashboard_page():
     seller = seller_df.iloc[0]
     seller_id = int(seller["id"])
     st.success(f"Seller: {safe(seller['store_name'])} | Status: {safe(seller['status'])}")
-    tabs = st.tabs(["Store Profile", "Upload Product", "Bulk Import", "Gallery", "Listings", "Orders", "Messages", "Announcements", "Events/Drops", "Badges", "Feedback"])
+    tabs = st.tabs(["Store Profile", "Upload Product", "Barcode Scanner", "Bulk Import", "Gallery", "Listings", "Orders", "Messages", "Announcements", "Events/Drops", "Badges", "Feedback"])
     with tabs[0]:
         with st.form("seller_profile"):
             store_name = st.text_input("Store name", value=safe(seller["store_name"]))
@@ -1101,10 +1173,15 @@ def seller_dashboard_page():
             st.success("Profile saved.")
     with tabs[1]:
         with st.form("product_upload"):
+            barcode = st.text_input("Barcode / UPC / EAN")
+            catalog_number = st.text_input("Catalog number")
+            matrix_runout = st.text_input("Matrix / runout")
             artist = st.text_input("Artist / Brand")
             title = st.text_input("Title / Product")
             category = st.selectbox("Category", ["Vinyl Records","CDs","Cassettes","Clothing","Music Memorabilia","Culture Goods"])
             fmt = st.text_input("Format", value="Vinyl")
+            label = st.text_input("Label / Brand")
+            release_year = st.text_input("Release year")
             genre = st.text_input("Genre")
             media_grade = st.selectbox("Grade", ["Mint","Near Mint","VG+","VG","Good","Used","New","N/A"])
             sleeve_grade = st.selectbox("Sleeve/Packaging", ["Mint","Near Mint","VG+","VG","Good","Used","New","N/A"])
@@ -1120,11 +1197,49 @@ def seller_dashboard_page():
             image = save_uploaded_file(image_file, "product_images") or image_url
             desc = description or generate_description({"artist":artist,"title":title,"format":fmt,"genre":genre,"media_grade":media_grade,"sleeve_grade":sleeve_grade,"condition_notes":notes})
             run_sql("""
-                INSERT INTO products (seller_id,category,artist,title,format,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,listing_status,listing_type,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active','Fixed Price',?,?)
-            """, (seller_id, category, artist, title, fmt, genre, media_grade, sleeve_grade, notes, desc, float(price), int(quantity), float(shipping), image, now(), now()))
+                INSERT INTO products (seller_id,barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,listing_status,listing_type,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Active','Fixed Price',?,?)
+            """, (seller_id, barcode, catalog_number, matrix_runout, category, artist, title, fmt, label, release_year, genre, media_grade, sleeve_grade, notes, desc, float(price), int(quantity), float(shipping), image, now(), now()))
             st.success("Product uploaded and active.")
     with tabs[2]:
+        st.subheader("Barcode Scanner / Inventory Add")
+        st.info("For testing: use a USB/Bluetooth barcode scanner, your phone keyboard scanner, or type/paste the barcode. Most barcode scanners act like a keyboard and fill this field automatically.")
+        barcode = st.text_input("Scan or enter barcode / UPC / EAN", key="barcode_scan_input")
+        lookup = product_lookup_by_barcode(barcode)
+        if lookup:
+            st.success("Matched an existing product in your House Of Wax inventory. You can copy the known details below.")
+            st.json(lookup)
+        with st.form("barcode_quick_add"):
+            st.write("Quick-add scanned item")
+            barcode_form = st.text_input("Barcode", value=barcode, key="barcode_form_value")
+            artist = st.text_input("Artist / Brand", value=lookup.get("artist", ""))
+            title = st.text_input("Title / Product", value=lookup.get("title", ""))
+            category = st.selectbox("Category", ["Vinyl Records","CDs","Cassettes","Clothing","Music Memorabilia","Culture Goods"], index=0)
+            fmt = st.text_input("Format", value=lookup.get("format", "Vinyl"))
+            label = st.text_input("Label / Brand", value=lookup.get("label", ""))
+            release_year = st.text_input("Release year", value=lookup.get("release_year", ""))
+            genre = st.text_input("Genre", value=lookup.get("genre", ""))
+            catalog_number = st.text_input("Catalog number", value=lookup.get("catalog_number", ""))
+            media_grade = st.selectbox("Media/Product grade", ["Mint","Near Mint","VG+","VG","Good","Used","New","N/A"])
+            sleeve_grade = st.selectbox("Sleeve/Packaging grade", ["Mint","Near Mint","VG+","VG","Good","Used","New","N/A"])
+            condition_notes = st.text_area("Condition notes")
+            price = st.number_input("Price", min_value=0.0, step=0.01, key="barcode_price")
+            quantity = st.number_input("Quantity", min_value=1, value=1, key="barcode_qty")
+            shipping = st.number_input("Shipping", min_value=0.0, step=0.01, key="barcode_shipping")
+            image_file = st.file_uploader("Product image", type=["png","jpg","jpeg","webp"], key="barcode_image")
+            image_url = st.text_input("Image URL", key="barcode_image_url")
+            description = st.text_area("Description")
+            submitted = st.form_submit_button("Add Scanned Item to Inventory")
+        if submitted:
+            image = save_uploaded_file(image_file, "product_images") or image_url
+            desc = description or generate_description({"artist":artist,"title":title,"format":fmt,"genre":genre,"label":label,"release_year":release_year,"media_grade":media_grade,"sleeve_grade":sleeve_grade,"condition_notes":condition_notes})
+            run_sql("""
+                INSERT INTO products (seller_id,barcode,catalog_number,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,listing_status,listing_type,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Active','Fixed Price',?,?)
+            """, (seller_id, barcode_form, catalog_number, category, artist, title, fmt, label, release_year, genre, media_grade, sleeve_grade, condition_notes, desc, float(price), int(quantity), float(shipping), image, now(), now()))
+            st.success("Scanned item added to seller inventory and visible in Marketplace/Seller Profile.")
+
+    with tabs[3]:
         csv = st.file_uploader("CSV product import", type=["csv"])
         if csv is not None:
             df = pd.read_csv(csv)
@@ -1133,12 +1248,12 @@ def seller_dashboard_page():
                 count = 0
                 for _, r in df.iterrows():
                     run_sql("""
-                        INSERT INTO products (seller_id,category,artist,title,format,genre,description,price,quantity,shipping_price,image_url,listing_status,listing_type,created_at,updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,'Active','Fixed Price',?,?)
-                    """, (seller_id, safe(r.get("category"),"Vinyl Records"), safe(r.get("artist")), safe(r.get("title")), safe(r.get("format"),"Vinyl"), safe(r.get("genre")), safe(r.get("description")), float(r.get("price",0) or 0), int(r.get("quantity",1) or 1), float(r.get("shipping_price",0) or 0), safe(r.get("image_url")), now(), now()))
+                        INSERT INTO products (seller_id,barcode,catalog_number,category,artist,title,format,label,release_year,genre,description,price,quantity,shipping_price,image_url,listing_status,listing_type,created_at,updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Active','Fixed Price',?,?)
+                    """, (seller_id, safe(r.get("barcode")), safe(r.get("catalog_number")), safe(r.get("category"),"Vinyl Records"), safe(r.get("artist")), safe(r.get("title")), safe(r.get("format"),"Vinyl"), safe(r.get("label")), safe(r.get("release_year")), safe(r.get("genre")), safe(r.get("description")), float(r.get("price",0) or 0), int(r.get("quantity",1) or 1), float(r.get("shipping_price",0) or 0), safe(r.get("image_url")), now(), now()))
                     count += 1
                 st.success(f"Imported {count} products.")
-    with tabs[3]:
+    with tabs[4]:
         products = get_df("SELECT * FROM products WHERE seller_id=?", (seller_id,))
         st.dataframe(products, use_container_width=True)
         if not products.empty:
@@ -1151,7 +1266,7 @@ def seller_dashboard_page():
                 if img:
                     run_sql("INSERT INTO product_gallery (product_id,image_url,caption,created_at) VALUES (?,?,?,?)", (int(product_id), img, caption, now()))
                     st.success("Gallery image added.")
-    with tabs[4]:
+    with tabs[5]:
         products = get_df("SELECT * FROM products WHERE seller_id=? ORDER BY created_at DESC", (seller_id,))
         st.dataframe(products, use_container_width=True)
         if not products.empty:
@@ -1160,10 +1275,14 @@ def seller_dashboard_page():
             if st.button("Update Listing"):
                 run_sql("UPDATE products SET listing_status=?, updated_at=? WHERE id=? AND seller_id=?", (status, now(), int(product_id), seller_id))
                 st.success("Updated.")
-    with tabs[5]:
+    with tabs[6]:
         orders = get_df("SELECT * FROM orders WHERE seller_id=? ORDER BY created_at DESC", (seller_id,))
         st.dataframe(orders, use_container_width=True)
         if not orders.empty:
+            public_buyer_ids = orders["buyer_id"].dropna().astype(int).unique().tolist()
+            if public_buyer_ids:
+                buyer_profile_id = st.selectbox("View public buyer trust profile", public_buyer_ids, key="seller_view_buyer_profile")
+                buyer_public_profile(int(buyer_profile_id))
             order_id = st.selectbox("Order", orders["id"].tolist())
             status = st.selectbox("Order status", ["New","Contacted","Invoice Sent","Paid","Shipped","Completed","Cancelled","Disputed"])
             if st.button("Update Order"):
@@ -1173,7 +1292,7 @@ def seller_dashboard_page():
                     run_sql("UPDATE sellers SET completed_sales=completed_sales+1 WHERE id=?", (seller_id,))
                     run_sql("UPDATE buyers SET completed_purchases=completed_purchases+1 WHERE id=?", (int(order["buyer_id"]),))
                 st.success("Order updated.")
-    with tabs[6]:
+    with tabs[7]:
         messages = get_df("SELECT * FROM messages WHERE seller_id=? ORDER BY created_at DESC", (seller_id,))
         st.dataframe(messages, use_container_width=True)
         if not messages.empty:
@@ -1181,7 +1300,7 @@ def seller_dashboard_page():
             if st.button("Mark Responded"):
                 run_sql("UPDATE messages SET status='Responded' WHERE id=?", (int(msg_id),))
                 st.success("Marked responded.")
-    with tabs[7]:
+    with tabs[8]:
         with st.form("announcement"):
             title = st.text_input("Announcement title")
             body = st.text_area("Announcement body")
@@ -1190,7 +1309,7 @@ def seller_dashboard_page():
             run_sql("INSERT INTO store_announcements (seller_id,title,body,status,created_at) VALUES (?,?,?,'Active',?)", (seller_id, title, body, now()))
             st.success("Announcement posted.")
         st.dataframe(get_df("SELECT * FROM store_announcements WHERE seller_id=?", (seller_id,)), use_container_width=True)
-    with tabs[8]:
+    with tabs[9]:
         with st.form("event"):
             title = st.text_input("Drop/Event title")
             event_type = st.selectbox("Type", ["Record Drop","Auction Drop","Sale","Live Event","Other"])
@@ -1201,9 +1320,9 @@ def seller_dashboard_page():
             run_sql("INSERT INTO seller_events (seller_id,event_title,event_type,event_date,description,status,created_at) VALUES (?,?,?,?,?,'Active',?)", (seller_id, title, event_type, date, description, now()))
             st.success("Event saved.")
         st.dataframe(get_df("SELECT * FROM seller_events WHERE seller_id=?", (seller_id,)), use_container_width=True)
-    with tabs[9]:
-        st.write(seller_badges_text(seller_id) or "No badges yet.")
     with tabs[10]:
+        st.write(seller_badges_text(seller_id) or "No badges yet.")
+    with tabs[11]:
         st.dataframe(get_df("SELECT * FROM feedback WHERE reviewee_type='Seller' AND reviewee_id=?", (seller_id,)), use_container_width=True)
 
 
