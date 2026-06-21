@@ -1,5 +1,19 @@
-# Quick Start V15.6 Lite
+# Quick Start V15.7
 
-Upload app.py first by itself. Then upload requirements.txt and runtime.txt. Reboot Streamlit.
+1. Upload files individually to GitHub.
+2. Reboot Streamlit.
+3. Confirm:
 
-Confirm: `Running V15.6 LITE UPLOAD SAFE PATCH`.
+`Running V15.7 TESTING UNLOCKED`
+
+4. Go to Test Setup.
+5. Click Create Demo Buyer, Seller, and Product.
+6. Test every page.
+
+## Upload These First
+
+- app.py
+- requirements.txt
+- runtime.txt
+
+Then upload README.md.

@@ -1,7 +1,3 @@
-# House Of Wax Business Plan Draft
+# HOUSE OF WAX BUSINESS PLAN DRAFT
 
-House Of Wax is a seller-powered music and culture marketplace.
-
-The platform creates a community where sellers are not faceless vendors. Each seller can tell their story, display their brand, set policies, upload inventory, and build reputation through feedback.
-
-This community model supports trust, repeat buying, and seller loyalty.
+Updated for V15.7 testing unlocked. The priority is fast user testing before production hardening.

@@ -1,9 +1,3 @@
-# Seller Policy Draft
+# SELLER POLICY DRAFT
 
-Sellers must be approved before selling.
-
-Sellers can create a public store profile with logo, banner, story, specialties, policies, and listings.
-
-Approved sellers can upload products individually or by CSV.
-
-Sellers can rate buyers after completed transactions.
+Updated for V15.7 testing unlocked. The priority is fast user testing before production hardening.

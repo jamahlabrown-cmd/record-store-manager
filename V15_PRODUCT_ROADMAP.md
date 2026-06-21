@@ -1,3 +1,3 @@
-# Roadmap
+# V15 PRODUCT ROADMAP
 
-V15.6 Lite adds messaging, following, badges, announcements, and spotlights. Product galleries and events can come next in smaller patches.
+Updated for V15.7 testing unlocked. The priority is fast user testing before production hardening.

@@ -1,13 +1,3 @@
-# Startup Budget Draft
+# STARTUP BUDGET DRAFT
 
-V15.5 adds community profile and feedback features.
-
-Future production budget should include:
-
-- seller profile design
-- media storage
-- real email notifications
-- review moderation
-- seller onboarding automation
-- product import tools
-- secure authentication
+Updated for V15.7 testing unlocked. The priority is fast user testing before production hardening.

@@ -1,7 +1,3 @@
-# Buyer Policy Draft
+# BUYER POLICY DRAFT
 
-Buyers must register before buying, bidding, saving items, reporting, or leaving feedback.
-
-Buyers must pay for commitments and auction wins. Buyer remorse does not automatically override seller policies if the item was accurately described.
-
-Buyers can receive seller feedback and ratings.
+Updated for V15.7 testing unlocked. The priority is fast user testing before production hardening.

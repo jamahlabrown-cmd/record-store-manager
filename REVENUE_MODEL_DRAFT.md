@@ -1,11 +1,3 @@
-# Revenue Model Draft
+# REVENUE MODEL DRAFT
 
-Revenue streams:
-
-- marketplace commission
-- auction commission
-- seller subscriptions
-- promoted seller profiles
-- featured store placement
-- sponsored culture posts
-- product promotion
+Updated for V15.7 testing unlocked. The priority is fast user testing before production hardening.

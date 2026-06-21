@@ -1,3 +1,9 @@
-# Upload Safe Instructions
+# Deploy Notes
 
-Do not upload the ZIP itself to GitHub as the app. Open the ZIP and upload app.py first. If GitHub spins, use the GitHub file editor: open app.py, select all, paste the new app.py, and commit.
+If GitHub spins, upload only app.py first.
+
+Do not upload the ZIP as the app.
+
+Open GitHub app.py, use Edit, paste the new app.py, and commit.
+
+Then reboot Streamlit.
