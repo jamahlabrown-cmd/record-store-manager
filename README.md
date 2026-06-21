@@ -1,23 +1,35 @@
-# House Of Wax V15.3 Clean Reset
+# House Of Wax V15.4 Fix + Testing Patch
 
-This is a clean reset package built to replace the old broken `app.py`.
+This version adds the first full batch of fixes after the V15.3 clean reset.
 
-The app should display:
+You should see:
 
-`Running V15.3 CLEAN RESET`
+`Running V15.4 FIX + TESTING PATCH`
 
-near the top of every page. If you do not see that, Streamlit is still running an older file.
+inside the app. If not, Streamlit is still running an old file.
 
-## Model
+## Main Fixes
 
-- House Of Wax is the platform.
-- Sellers apply and are approved.
-- Approved sellers run their own stores.
-- Sellers create their own policies.
-- Buyers register and are accountable.
-- Fixed-price listings do not require manual approval.
-- Listings can be flagged for admin review.
-- Auctions are earned by seller performance or admin override.
+- Friendly duplicate buyer email message
+- Friendly duplicate seller email message
+- Buyer Dashboard added
+- Buyer profile and buyer history
+- Buyer favorites/watchlist
+- Buyer rating/status visible
+- Seller application confirmation improved
+- Request to Buy wording instead of Buy Now Request
+- Buyer agreement checkbox before purchase request
+- Report Seller feature
+- Seller sees buyer rating/status on orders
+- Seller can update order status
+- Seller can mark buyer as non-paying
+- Seller policy templates
+- Auction eligibility progress display
+- Admin dashboard alerts
+- Admin Platform Rules tab
+- Admin Testing Cleanup tools
+- Expanded reports and business summary
+- Updated business planning files
 
 ## Admin Password
 

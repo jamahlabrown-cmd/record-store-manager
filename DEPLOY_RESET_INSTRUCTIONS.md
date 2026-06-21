@@ -1,37 +1,19 @@
-# Critical Deployment Reset Instructions
+# Deploy Reset Instructions
 
-Your prior Streamlit error proves Streamlit is still running the old broken app.py.
+The app must show:
 
-The old broken file contains this text:
+`Running V15.4 FIX + TESTING PATCH`
 
-```python
-header(); st.header('Marketplace')
-st.image(logo,use_container_width=True) if logo else st.markdown('## 🎧')
-```
+If it does not, the new `app.py` was not uploaded or Streamlit is running an old file.
 
-The new file does NOT contain that text.
+## Upload Checklist
 
-## Do this carefully
+Upload files individually, not the ZIP itself.
 
-1. Open GitHub repository.
-2. Click `app.py`.
-3. Delete the old `app.py` or edit it.
-4. Replace the entire file with the new `app.py` from this ZIP.
-5. Make sure GitHub shows this near the top:
+Most important:
 
-```python
-APP_VERSION = "V15.3 CLEAN RESET"
-```
+- app.py
+- requirements.txt
+- runtime.txt
 
-6. Commit changes.
-7. Go to Streamlit.
-8. Click `Manage app`.
-9. Click `Reboot`.
-
-## How to know it worked
-
-The app will show:
-
-`Running V15.3 CLEAN RESET`
-
-If you still see the old traceback mentioning `header(); st.header('Marketplace')`, the old file is still deployed.
+Then reboot Streamlit.

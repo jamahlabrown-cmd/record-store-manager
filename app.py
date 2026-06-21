@@ -11,9 +11,9 @@ st.set_page_config(
     layout="wide"
 )
 
-APP_VERSION = "V15.3 CLEAN RESET"
+APP_VERSION = "V15.4 FIX + TESTING PATCH"
 APP_NAME = "House Of Wax"
-DB = Path("house_of_wax_v15_3.db")
+DB = Path("house_of_wax_v15_4.db")
 
 try:
     ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
@@ -69,10 +69,21 @@ def safe(value, fallback=""):
             return fallback
     except Exception:
         pass
-    value = str(value)
-    if value.lower() in ["nan", "none"]:
+    text = str(value)
+    if text.lower() in ["nan", "none"]:
         return fallback
-    return value
+    return text
+
+
+def email_exists(table_name, email):
+    if not email:
+        return False
+    df = get_df(f"SELECT id FROM {table_name} WHERE lower(email)=lower(?)", (email.strip(),))
+    return not df.empty
+
+
+def delete_by_id(table_name, row_id):
+    run_sql(f"DELETE FROM {table_name} WHERE id = ?", (int(row_id),))
 
 
 # -----------------------------
@@ -211,6 +222,29 @@ def setup_database():
     """)
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS seller_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seller_id INTEGER,
+            buyer_id INTEGER,
+            reason TEXT,
+            details TEXT,
+            status TEXT DEFAULT 'Open',
+            admin_notes TEXT,
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            buyer_id INTEGER,
+            item_type TEXT,
+            item_id INTEGER,
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS auctions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_id INTEGER,
@@ -282,6 +316,17 @@ def setup_database():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS platform_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            category TEXT,
+            rule_text TEXT,
+            active TEXT DEFAULT 'Yes',
+            created_at TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -294,12 +339,28 @@ def setup_database():
         "auction_min_completed_sales": "10",
         "auction_min_rating": "90",
         "default_processing_time": "3 business days",
+        "buyer_payment_window_hours": "48",
     }
 
     for key, value in default_settings.items():
         existing = get_df("SELECT value FROM settings WHERE key = ?", (key,))
         if existing.empty:
             run_sql("INSERT INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    rules = get_table("platform_rules")
+    if rules.empty:
+        starter_rules = [
+            ("Seller policies cannot weaken House Of Wax rules", "Seller Rules", "Sellers may create their own shipping, return, grading, and customer service policies, but those policies cannot reduce required buyer or seller protections."),
+            ("No counterfeit or prohibited items", "Listings", "Counterfeit, stolen, illegal, hateful, or misleading items may be removed and may lead to seller restriction."),
+            ("Buyers must pay for commitments", "Buyer Rules", "Buyers who commit to purchase or win auctions are expected to pay within the posted payment window."),
+            ("Auctions are earned", "Auctions", "Sellers must meet performance requirements or receive admin override before using auctions."),
+            ("Flagged content may be reviewed", "Trust & Safety", "House Of Wax may review flagged listings, seller reports, disputes, and suspicious activity.")
+        ]
+        for title, category, text in starter_rules:
+            run_sql(
+                "INSERT INTO platform_rules (title, category, rule_text, active, created_at) VALUES (?, ?, ?, 'Yes', ?)",
+                (title, category, text, now())
+            )
 
 
 setup_database()
@@ -373,6 +434,21 @@ def auction_eligible(seller):
     if int(seller["disputes"] or 0) > 0:
         return False, "Seller must have no disputes or receive admin override."
     return True, "Seller meets auction requirements."
+
+
+def auction_progress(seller):
+    min_sales = int(float(get_setting("auction_min_completed_sales", "10")))
+    min_rating = float(get_setting("auction_min_rating", "90"))
+    sales = int(seller["completed_sales"] or 0)
+    rating = float(seller["rating"] or 0)
+    strikes = int(seller["strikes"] or 0)
+    disputes = int(seller["disputes"] or 0)
+    return {
+        "Completed sales": (sales, min_sales, sales >= min_sales),
+        "Seller rating": (rating, min_rating, rating >= min_rating),
+        "Strikes": (strikes, 0, strikes == 0),
+        "Disputes": (disputes, 0, disputes == 0),
+    }
 
 
 def generate_description(data):
@@ -461,7 +537,7 @@ def choose_buyer(key_prefix):
 
     options = []
     for _, row in buyers.iterrows():
-        label = f"{int(row['id'])} | {safe(row['name'])} | {safe(row['email'])} | {safe(row['status'])}"
+        label = f"{int(row['id'])} | {safe(row['name'])} | {safe(row['email'])} | {safe(row['status'])} | Rating {row['rating']}%"
         options.append(label)
 
     selected = st.selectbox("Buyer account", options, key=f"{key_prefix}_buyer")
@@ -471,10 +547,7 @@ def choose_buyer(key_prefix):
 
 def product_card(product):
     seller = get_seller(product["seller_id"])
-    if seller is None:
-        seller_name = "Unknown Seller"
-    else:
-        seller_name = safe(seller["store_name"], "Seller")
+    seller_name = safe(seller["store_name"], "Seller") if seller is not None else "Unknown Seller"
 
     with st.container(border=True):
         image_url = safe(product.get("image_url"))
@@ -527,6 +600,7 @@ def product_detail(product):
 
         if seller is not None:
             st.write(f"**Seller:** {safe(seller['store_name'])}")
+            st.caption(f"Seller rating: {seller['rating']}% • Sales: {seller['completed_sales']} • Level: {seller['seller_level']}")
         else:
             st.write("**Seller:** Unknown")
 
@@ -569,17 +643,25 @@ def product_detail(product):
     st.divider()
     st.subheader("Buy / Contact Seller")
     buyer_id = choose_buyer(f"buy_{int(product['id'])}")
-    action = st.selectbox("Action", ["Buy Now Request", "Ask a Question", "Make Offer"], key=f"action_{int(product['id'])}")
+    action = st.selectbox("Action", ["Request to Buy", "Ask a Question", "Make Offer"], key=f"action_{int(product['id'])}")
     message = st.text_area("Message to seller", key=f"message_{int(product['id'])}")
+    agree = st.checkbox(
+        "I reviewed the listing, condition notes, shipping terms, and seller store policies.",
+        key=f"agree_{int(product['id'])}"
+    )
+
+    st.caption("This is not payment yet. The seller will contact the buyer to complete payment and shipping.")
 
     if st.button("Submit to Seller", key=f"submit_{int(product['id'])}"):
         if buyer_id is None:
             st.error("Register as a buyer first.")
+        elif not agree:
+            st.error("Please confirm that you reviewed the listing and seller policies.")
         else:
             buyer = get_buyer(buyer_id)
             allowed, reason = buyer_allowed(buyer)
 
-            if action == "Buy Now Request" and not allowed:
+            if action == "Request to Buy" and not allowed:
                 st.error(reason)
             else:
                 item_price = float(product.get("price") or 0)
@@ -607,6 +689,18 @@ def product_detail(product):
                 ))
                 st.success("Sent to seller.")
 
+    with st.expander("Save / Favorite this item"):
+        favorite_buyer_id = choose_buyer(f"favorite_{int(product['id'])}")
+        if st.button("Save Item", key=f"save_item_{int(product['id'])}"):
+            if favorite_buyer_id is None:
+                st.error("Register as a buyer first.")
+            else:
+                run_sql(
+                    "INSERT INTO favorites (buyer_id, item_type, item_id, created_at) VALUES (?, 'Product', ?, ?)",
+                    (int(favorite_buyer_id), int(product["id"]), now())
+                )
+                st.success("Item saved to buyer favorites.")
+
     with st.expander("Report this listing"):
         reason = st.selectbox(
             "Report reason",
@@ -616,7 +710,7 @@ def product_detail(product):
         details = st.text_area("Details", key=f"flag_details_{int(product['id'])}")
         flag_buyer_id = choose_buyer(f"flag_{int(product['id'])}")
 
-        if st.button("Submit Report", key=f"flag_button_{int(product['id'])}"):
+        if st.button("Submit Listing Report", key=f"flag_button_{int(product['id'])}"):
             if flag_buyer_id is None:
                 st.error("Register as a buyer before reporting.")
             else:
@@ -634,6 +728,26 @@ def product_detail(product):
                 ))
                 run_sql("UPDATE products SET listing_status = 'Flagged' WHERE id = ?", (int(product["id"]),))
                 st.success("Listing reported to House Of Wax.")
+
+    if seller is not None:
+        with st.expander("Report this seller"):
+            reason = st.selectbox(
+                "Seller report reason",
+                ["Scam Concern", "Abusive Communication", "Repeated Misgrading", "Not Shipping", "Prohibited Items", "Fee Avoidance", "Other"],
+                key=f"seller_report_reason_{int(product['id'])}"
+            )
+            details = st.text_area("Report details", key=f"seller_report_details_{int(product['id'])}")
+            report_buyer_id = choose_buyer(f"seller_report_{int(product['id'])}")
+            if st.button("Submit Seller Report", key=f"seller_report_button_{int(product['id'])}"):
+                if report_buyer_id is None:
+                    st.error("Register as a buyer before reporting.")
+                else:
+                    run_sql("""
+                        INSERT INTO seller_reports
+                        (seller_id, buyer_id, reason, details, status, created_at)
+                        VALUES (?, ?, ?, ?, 'Open', ?)
+                    """, (int(seller["id"]), int(report_buyer_id), reason, details, now()))
+                    st.success("Seller report submitted.")
 
 
 # -----------------------------
@@ -741,10 +855,7 @@ def auctions_page():
 
             high = get_df("SELECT MAX(bid_amount) AS high_bid FROM bids WHERE auction_id = ?", (int(auction["id"]),))
             high_bid = high.iloc[0]["high_bid"]
-            if pd.notna(high_bid):
-                current_bid = float(high_bid)
-            else:
-                current_bid = float(auction["starting_bid"] or 0)
+            current_bid = float(high_bid) if pd.notna(high_bid) else float(auction["starting_bid"] or 0)
 
             st.write(f"**Current bid:** {money(current_bid)}")
             st.write(f"**Ends:** {safe(auction.get('end_time'))}")
@@ -801,6 +912,24 @@ def seller_stores_page():
                 st.caption(f"{safe(seller.get('seller_level'))} • Rating {seller.get('rating')}% • Sales {seller.get('completed_sales')}")
                 st.write(safe(seller.get("store_bio"), "Independent seller on House Of Wax."))
 
+            report_buyer_id = choose_buyer(f"store_report_{int(seller['id'])}")
+            with st.expander(f"Report {safe(seller.get('store_name'))}"):
+                reason = st.selectbox(
+                    "Reason",
+                    ["Scam Concern", "Abusive Communication", "Repeated Misgrading", "Not Shipping", "Prohibited Items", "Fee Avoidance", "Other"],
+                    key=f"store_report_reason_{int(seller['id'])}"
+                )
+                details = st.text_area("Details", key=f"store_report_details_{int(seller['id'])}")
+                if st.button("Submit Seller Report", key=f"store_report_button_{int(seller['id'])}"):
+                    if report_buyer_id is None:
+                        st.error("Register as a buyer before reporting.")
+                    else:
+                        run_sql(
+                            "INSERT INTO seller_reports (seller_id, buyer_id, reason, details, status, created_at) VALUES (?, ?, ?, ?, 'Open', ?)",
+                            (int(seller["id"]), int(report_buyer_id), reason, details, now())
+                        )
+                        st.success("Seller report submitted.")
+
 
 def culture_page():
     render_header()
@@ -839,6 +968,8 @@ def register_page():
         if submitted:
             if not name or not email:
                 st.error("Name and email are required.")
+            elif email_exists("buyers", email):
+                st.warning("This buyer email is already registered. Please use a different email or open the Buyer Dashboard with this account.")
             else:
                 try:
                     run_sql(
@@ -846,8 +977,8 @@ def register_page():
                         (name, email, phone, city, now())
                     )
                     st.success("Buyer account created.")
-                except Exception as error:
-                    st.error(f"Could not create buyer: {error}")
+                except Exception:
+                    st.error("Could not create buyer account. Please check the information and try again.")
 
     with seller_tab:
         st.subheader("Apply to Sell")
@@ -867,6 +998,8 @@ def register_page():
         if submitted:
             if not store_name or not email or not access_code:
                 st.error("Store name, email, and access code are required.")
+            elif email_exists("sellers", email):
+                st.warning("This seller email is already registered or already applied. Please use the Seller Dashboard or contact House Of Wax.")
             elif not agree:
                 st.error("You must agree to platform rules.")
             else:
@@ -876,9 +1009,94 @@ def register_page():
                         (store_name, owner_name, email, phone, city, store_bio, access_code, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """, (store_name, owner, email, phone, city, bio, access_code, now()))
-                    st.success("Seller application submitted.")
-                except Exception as error:
-                    st.error(f"Could not submit seller application: {error}")
+                    st.success("Your seller application has been submitted. House Of Wax must approve your store before you can list products. Save your seller email and access code.")
+                except Exception:
+                    st.error("Could not submit seller application. Please check the information and try again.")
+
+
+def buyer_dashboard_page():
+    render_header()
+    st.header("Buyer Dashboard")
+
+    email = st.text_input("Buyer email")
+    if not st.button("Open Buyer Dashboard"):
+        return
+
+    buyer_df = get_df("SELECT * FROM buyers WHERE lower(email)=lower(?)", (email.strip(),))
+    if buyer_df.empty:
+        st.error("No buyer found with this email. Please register first.")
+        return
+
+    buyer = buyer_df.iloc[0]
+    buyer_id = int(buyer["id"])
+
+    st.success(f"Buyer account: {safe(buyer['name'])}")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Status", safe(buyer["status"]))
+    col2.metric("Rating", f"{buyer['rating']}%")
+    col3.metric("Completed Purchases", buyer["completed_purchases"])
+    col4.metric("Unpaid Orders", buyer["unpaid_orders"])
+    col5.metric("Strikes", buyer["strikes"])
+
+    tabs = st.tabs(["Profile", "Purchase Requests", "Bids", "Favorites", "Disputes", "Rules"])
+
+    with tabs[0]:
+        st.subheader("Profile")
+        with st.form("buyer_profile_form"):
+            name = st.text_input("Name", value=safe(buyer["name"]))
+            phone = st.text_input("Phone", value=safe(buyer["phone"]))
+            city = st.text_input("City", value=safe(buyer["city"]))
+            submitted = st.form_submit_button("Update Profile")
+        if submitted:
+            run_sql("UPDATE buyers SET name=?, phone=?, city=? WHERE id=?", (name, phone, city, buyer_id))
+            st.success("Buyer profile updated.")
+
+    with tabs[1]:
+        st.subheader("Purchase Requests")
+        orders = get_df("""
+            SELECT o.*, p.artist, p.title, s.store_name
+            FROM orders o
+            LEFT JOIN products p ON o.product_id = p.id
+            LEFT JOIN sellers s ON o.seller_id = s.id
+            WHERE o.buyer_id = ?
+            ORDER BY o.created_at DESC
+        """, (buyer_id,))
+        st.dataframe(orders, use_container_width=True)
+
+    with tabs[2]:
+        st.subheader("Bids")
+        bids = get_df("""
+            SELECT b.*, a.auction_title
+            FROM bids b
+            LEFT JOIN auctions a ON b.auction_id = a.id
+            WHERE b.buyer_id = ?
+            ORDER BY b.bid_time DESC
+        """, (buyer_id,))
+        st.dataframe(bids, use_container_width=True)
+
+    with tabs[3]:
+        st.subheader("Favorites")
+        favs = get_df("""
+            SELECT f.*, p.artist, p.title, p.price
+            FROM favorites f
+            LEFT JOIN products p ON f.item_id = p.id
+            WHERE f.buyer_id = ? AND f.item_type = 'Product'
+            ORDER BY f.created_at DESC
+        """, (buyer_id,))
+        st.dataframe(favs, use_container_width=True)
+
+    with tabs[4]:
+        st.subheader("Disputes")
+        disputes = get_df("SELECT * FROM disputes WHERE buyer_id = ? ORDER BY created_at DESC", (buyer_id,))
+        st.dataframe(disputes, use_container_width=True)
+
+    with tabs[5]:
+        st.subheader("Buyer Rules")
+        st.markdown("""
+        Buyers must pay for purchases and auction wins, communicate respectfully, and not abuse returns, disputes, chargebacks, or feedback.
+
+        Buyers can be rated, restricted, or suspended for unpaid orders, false claims, harassment, or repeated marketplace abuse.
+        """)
 
 
 # -----------------------------
@@ -940,11 +1158,23 @@ def seller_workspace(seller):
 
     with tabs[1]:
         st.subheader("Store Policies")
+        st.caption("Seller rules can be stronger than House Of Wax rules, but never weaker.")
+
+        templates = {
+            "Standard Shipping Policy": "Orders are usually processed within 3 business days. Tracking will be provided when available. Items are packed carefully to protect records, sleeves, clothing, and collectibles.",
+            "No Buyer Remorse Returns": "Returns are not accepted for buyer remorse, including changed mind, found cheaper elsewhere, or failure to read the listing. If an item is significantly not as described, contact the seller promptly.",
+            "Buyer Pays Return Shipping": "If a return is approved, the buyer is responsible for return shipping unless the item was significantly not as described or damaged due to seller packaging.",
+            "Local Pickup Available": "Local pickup may be available by appointment. Buyer and seller must agree on time, location, and pickup expectations before completing the transaction.",
+            "Vinyl Grading Policy": "Records are graded using common collector standards. Buyers should review media grade, sleeve grade, photos, and condition notes before purchase.",
+            "Clothing Condition Policy": "Clothing is described by size, condition, visible wear, and flaws when known. Buyers should review photos and measurements before purchase."
+        }
+        with st.expander("Policy Templates"):
+            for name, text in templates.items():
+                st.write(f"**{name}**")
+                st.code(text)
+
         policy_df = get_df("SELECT * FROM seller_policies WHERE seller_id = ?", (seller_id,))
-        if policy_df.empty:
-            policy = {}
-        else:
-            policy = policy_df.iloc[0]
+        policy = policy_df.iloc[0] if not policy_df.empty else {}
 
         with st.form("store_policies"):
             shipping = st.text_area("Shipping policy", value=safe(policy.get("shipping_policy") if len(policy) else ""))
@@ -1107,6 +1337,13 @@ def seller_workspace(seller):
         else:
             st.warning(f"Not auction eligible yet: {reason}")
 
+        progress = auction_progress(seller)
+        for label, (current, required, passed) in progress.items():
+            if label in ["Strikes", "Disputes"]:
+                st.write(f"{'✅' if passed else '❌'} {label}: {current} / required {required}")
+            else:
+                st.write(f"{'✅' if passed else '❌'} {label}: {current} / {required}")
+
         products = get_df("SELECT * FROM products WHERE seller_id = ? AND listing_status = 'Active'", (seller_id,))
         if eligible and not products.empty:
             with st.form("create_auction"):
@@ -1148,7 +1385,34 @@ def seller_workspace(seller):
 
     with tabs[5]:
         st.subheader("Orders")
-        st.dataframe(get_df("SELECT * FROM orders WHERE seller_id = ? ORDER BY created_at DESC", (seller_id,)), use_container_width=True)
+        orders = get_df("""
+            SELECT o.*, b.name AS buyer_name, b.email AS buyer_email, b.status AS buyer_status, b.rating AS buyer_rating,
+                   b.unpaid_orders AS buyer_unpaid_orders, b.strikes AS buyer_strikes,
+                   p.artist, p.title
+            FROM orders o
+            LEFT JOIN buyers b ON o.buyer_id = b.id
+            LEFT JOIN products p ON o.product_id = p.id
+            WHERE o.seller_id = ?
+            ORDER BY o.created_at DESC
+        """, (seller_id,))
+        st.dataframe(orders, use_container_width=True)
+
+        if not orders.empty:
+            order_id = st.selectbox("Order ID to manage", orders["id"].tolist(), key="seller_order_manage")
+            new_status = st.selectbox("Update order status", ["New", "Contacted", "Invoice Sent", "Paid", "Shipped", "Completed", "Cancelled", "Disputed"], key="seller_order_status")
+            if st.button("Update Order Status"):
+                run_sql("UPDATE orders SET status=?, updated_at=? WHERE id=? AND seller_id=?", (new_status, now(), int(order_id), seller_id))
+                if new_status == "Completed":
+                    order = orders[orders["id"] == order_id].iloc[0]
+                    run_sql("UPDATE sellers SET completed_sales = completed_sales + 1 WHERE id = ?", (seller_id,))
+                    run_sql("UPDATE buyers SET completed_purchases = completed_purchases + 1 WHERE id = ?", (int(order["buyer_id"]),))
+                st.success("Order status updated.")
+
+            if st.button("Mark Buyer as Non-Paying"):
+                order = orders[orders["id"] == order_id].iloc[0]
+                run_sql("UPDATE buyers SET unpaid_orders = unpaid_orders + 1, strikes = strikes + 1 WHERE id = ?", (int(order["buyer_id"]),))
+                run_sql("UPDATE orders SET status='Cancelled', updated_at=? WHERE id=? AND seller_id=?", (now(), int(order_id), seller_id))
+                st.warning("Buyer marked as non-paying. Buyer unpaid order count and strikes were increased.")
 
     with tabs[6]:
         st.subheader("Social Posts")
@@ -1210,11 +1474,14 @@ def admin_workspace():
         "Seller Management",
         "Buyer Management",
         "Flagged Listings",
+        "Seller Reports",
         "Orders",
         "Auctions",
         "Culture Content",
+        "Platform Rules",
         "Fees & Settings",
         "Reports",
+        "Testing Cleanup",
         "Business Planning"
     ])
 
@@ -1225,21 +1492,29 @@ def admin_workspace():
         products = get_table("products")
         orders = get_table("orders")
         flags = get_table("listing_flags")
+        seller_reports = get_table("seller_reports")
+
+        pending_sellers = len(sellers[sellers["status"] == "Pending"]) if not sellers.empty else 0
+        open_flags = len(flags[flags["status"] == "Open"]) if not flags.empty else 0
+        open_seller_reports = len(seller_reports[seller_reports["status"] == "Open"]) if not seller_reports.empty else 0
+        restricted_buyers = len(buyers[buyers["status"].isin(["Restricted Buyer", "Suspended Buyer"])]) if not buyers.empty else 0
 
         col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Sellers", len(sellers))
         col2.metric("Buyers", len(buyers))
         col3.metric("Products", len(products))
         col4.metric("Orders", len(orders))
-
-        if flags.empty:
-            open_flags = 0
-        else:
-            open_flags = len(flags[flags["status"] == "Open"])
-        col5.metric("Open Flags", open_flags)
+        col5.metric("Open Flags", open_flags + open_seller_reports)
 
         st.success(f"Admin loaded successfully. Running {APP_VERSION}.")
-        st.info("House Of Wax approves sellers, not every product. Bad listings are flagged for review. Auctions are earned through seller performance.")
+        if pending_sellers:
+            st.warning(f"{pending_sellers} seller application(s) need review.")
+        if open_flags:
+            st.warning(f"{open_flags} flagged listing(s) need review.")
+        if open_seller_reports:
+            st.warning(f"{open_seller_reports} seller report(s) need review.")
+        if restricted_buyers:
+            st.warning(f"{restricted_buyers} buyer account(s) are restricted or suspended.")
 
     with tabs[1]:
         st.subheader("Seller Applications")
@@ -1250,10 +1525,7 @@ def admin_workspace():
             seller_id = st.selectbox("Seller ID to review", pending["id"].tolist())
             decision = st.selectbox("Decision", ["Approved", "Rejected"])
             if st.button("Save Seller Decision"):
-                if decision == "Approved":
-                    level = "Approved Seller"
-                else:
-                    level = "Rejected"
+                level = "Approved Seller" if decision == "Approved" else "Rejected"
                 run_sql(
                     "UPDATE sellers SET status=?, seller_level=? WHERE id=?",
                     (decision, level, int(seller_id))
@@ -1321,10 +1593,8 @@ def admin_workspace():
 
                 if decision == "Remove Listing":
                     run_sql("UPDATE products SET listing_status = 'Removed' WHERE id = ?", (int(flag["product_id"]),))
-
                 if decision == "Suspend Seller":
                     run_sql("UPDATE sellers SET status = 'Suspended' WHERE id = ?", (int(flag["seller_id"]),))
-
                 if decision == "Issue Seller Strike":
                     run_sql("UPDATE sellers SET strikes = strikes + 1 WHERE id = ?", (int(flag["seller_id"]),))
 
@@ -1335,6 +1605,29 @@ def admin_workspace():
                 st.success("Flag resolved.")
 
     with tabs[5]:
+        st.subheader("Seller Reports")
+        reports = get_df("""
+            SELECT r.*, s.store_name, b.name AS buyer_name, b.email AS buyer_email
+            FROM seller_reports r
+            LEFT JOIN sellers s ON r.seller_id = s.id
+            LEFT JOIN buyers b ON r.buyer_id = b.id
+            ORDER BY r.created_at DESC
+        """)
+        st.dataframe(reports, use_container_width=True)
+        if not reports.empty:
+            report_id = st.selectbox("Report ID", reports["id"].tolist())
+            decision = st.selectbox("Report Decision", ["Dismiss", "Keep Under Review", "Suspend Seller", "Issue Seller Strike"])
+            notes = st.text_area("Report admin notes")
+            if st.button("Resolve Seller Report"):
+                report = reports[reports["id"] == report_id].iloc[0]
+                if decision == "Suspend Seller":
+                    run_sql("UPDATE sellers SET status='Suspended' WHERE id=?", (int(report["seller_id"]),))
+                if decision == "Issue Seller Strike":
+                    run_sql("UPDATE sellers SET strikes = strikes + 1 WHERE id=?", (int(report["seller_id"]),))
+                run_sql("UPDATE seller_reports SET status=?, admin_notes=? WHERE id=?", (decision, notes, int(report_id)))
+                st.success("Seller report resolved.")
+
+    with tabs[6]:
         st.subheader("Orders")
         orders = get_table("orders")
         st.dataframe(orders, use_container_width=True)
@@ -1356,11 +1649,12 @@ def admin_workspace():
 
                 st.success("Order updated.")
 
-    with tabs[6]:
-        st.subheader("Auctions")
-        st.dataframe(get_table("auctions"), use_container_width=True)
-
     with tabs[7]:
+        st.subheader("Auctions")
+        auctions = get_table("auctions")
+        st.dataframe(auctions, use_container_width=True)
+
+    with tabs[8]:
         st.subheader("Culture Content")
         with st.form("culture_form"):
             title = st.text_input("Title")
@@ -1379,7 +1673,25 @@ def admin_workspace():
 
         st.dataframe(get_table("culture_posts"), use_container_width=True)
 
-    with tabs[8]:
+    with tabs[9]:
+        st.subheader("Platform Rules")
+        rules = get_table("platform_rules")
+        st.dataframe(rules, use_container_width=True)
+
+        with st.form("new_rule_form"):
+            title = st.text_input("Rule title")
+            category = st.selectbox("Rule category", ["Seller Rules", "Buyer Rules", "Listings", "Auctions", "Fees", "Trust & Safety", "Other"])
+            rule_text = st.text_area("Rule text")
+            active = st.selectbox("Active", ["Yes", "No"])
+            submitted = st.form_submit_button("Add / Save Rule")
+        if submitted:
+            run_sql(
+                "INSERT INTO platform_rules (title, category, rule_text, active, created_at) VALUES (?, ?, ?, ?, ?)",
+                (title, category, rule_text, active, now())
+            )
+            st.success("Rule added.")
+
+    with tabs[10]:
         st.subheader("Fees & Settings")
         with st.form("settings_form"):
             commission = st.text_input("Platform commission %", value=get_setting("platform_commission_percent", "9"))
@@ -1401,7 +1713,7 @@ def admin_workspace():
             save_setting("announcement", announcement)
             st.success("Settings saved.")
 
-    with tabs[9]:
+    with tabs[11]:
         st.subheader("Reports")
         report = st.selectbox("Report", [
             "sellers",
@@ -1410,21 +1722,61 @@ def admin_workspace():
             "products",
             "orders",
             "listing_flags",
+            "seller_reports",
+            "favorites",
             "auctions",
             "bids",
             "culture_posts",
             "disputes",
             "social_posts",
+            "platform_rules",
         ])
         data = get_table(report)
         st.dataframe(data, use_container_width=True)
         csv = data.to_csv(index=False)
         st.download_button("Download CSV", csv, file_name=f"{report}.csv")
 
-    with tabs[10]:
+        st.subheader("Business Summary Reports")
+        if not get_table("orders").empty:
+            orders = get_table("orders")
+            st.metric("Estimated Platform Fees", money(orders["platform_fee"].sum()))
+            st.metric("Estimated Seller Payouts", money(orders["seller_payout"].sum()))
+            st.download_button("Download Orders Business Summary", orders.to_csv(index=False), file_name="house_of_wax_orders_business_summary.csv")
+
+    with tabs[12]:
+        st.subheader("Testing Cleanup Tools")
+        st.warning("Use these tools only for testing. Deletes cannot be undone.")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            table_to_clean = st.selectbox("Table", ["buyers", "sellers", "products", "orders", "listing_flags", "seller_reports", "favorites", "auctions", "bids", "culture_posts", "disputes", "social_posts"])
+            rows = get_table(table_to_clean)
+            st.dataframe(rows, use_container_width=True)
+        with col2:
+            if not rows.empty:
+                row_id = st.selectbox("Row ID to delete", rows["id"].tolist())
+                confirm = st.checkbox("I understand this will delete the selected row.")
+                if st.button("Delete Selected Row"):
+                    if confirm:
+                        delete_by_id(table_to_clean, row_id)
+                        st.success(f"Deleted row {row_id} from {table_to_clean}.")
+                    else:
+                        st.error("Check the confirmation box first.")
+
+        st.divider()
+        confirm_all = st.checkbox("I understand this will clear most test data.")
+        if st.button("Clear Test Data"):
+            if confirm_all:
+                for table_name in ["orders", "listing_flags", "seller_reports", "favorites", "auctions", "bids", "culture_posts", "disputes", "social_posts", "products", "seller_policies", "buyers", "sellers"]:
+                    run_sql(f"DELETE FROM {table_name}")
+                st.success("Most test data cleared.")
+            else:
+                st.error("Check the confirmation box first.")
+
+    with tabs[13]:
         st.subheader("Business Planning")
         st.markdown("""
-        This package includes:
+        This package includes updated planning documents:
 
         - HOUSE_OF_WAX_BUSINESS_PLAN_DRAFT.md
         - STARTUP_BUDGET_DRAFT.md
@@ -1448,6 +1800,7 @@ menu = st.sidebar.radio(
         "Seller Stores",
         "Music + Culture",
         "Register / Sell",
+        "Buyer Dashboard",
         "Seller Dashboard",
         "Admin Login",
     ]
@@ -1465,6 +1818,8 @@ elif menu == "Music + Culture":
     culture_page()
 elif menu == "Register / Sell":
     register_page()
+elif menu == "Buyer Dashboard":
+    buyer_dashboard_page()
 elif menu == "Seller Dashboard":
     seller_dashboard_page()
 elif menu == "Admin Login":
