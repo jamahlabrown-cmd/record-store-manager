@@ -1,27 +1,32 @@
-# House Of Wax V15.8 Barcode + Public Trust Patch
+# House Of Wax V15.8.1 Barcode + Public Trust Verified
 
-This version adds back barcode inventory tools and makes feedback publicly visible for trust and transparency.
+This rebuild starts from the last working V15.7.1 base and carefully adds barcode inventory and public feedback.
 
 You should see:
 
-`Running V15.8 BARCODE + PUBLIC TRUST PATCH`
+`Running V15.8.1 BARCODE + PUBLIC TRUST VERIFIED`
 
-## New / Restored
+## Added and verified in code
 
-- Barcode / UPC / EAN fields on product upload
-- Catalog number and matrix/runout fields
-- Seller Dashboard tab: Barcode Scanner
-- Sellers can scan/type/paste barcodes and quick-add inventory
-- Barcode quick-add can reuse existing known inventory details
-- Bulk CSV import supports barcode, catalog_number, label, and release_year
-- Product pages show barcode, catalog number, and matrix/runout
-- Seller public profiles show public seller feedback
-- Buyer Dashboard shows public buyer feedback
-- Sellers can view a buyer public trust profile from orders
-- Feedback is treated as public marketplace trust information
+- Barcode / UPC / EAN on normal product upload
+- Catalog number on normal product upload
+- Matrix / runout on normal product upload
+- Label / brand on normal product upload
+- Release year on normal product upload
+- Dedicated Seller Dashboard Barcode Scanner tab
+- Barcode scanner quick-add inventory workflow
+- Bulk import supports barcode/catalog/matrix/label/year
+- Product pages publicly show barcode/catalog/matrix/label/year
+- Seller profiles publicly show seller feedback
+- Buyer Dashboard publicly shows buyer feedback received
+- Seller Orders tab shows buyer public trust profile
+- Sellers can publicly rate buyers after completed orders
+- Buyers can publicly rate sellers after completed orders
 
-## Important Barcode Note
+## Testing credentials
 
-In this Streamlit prototype, scanning works best with a USB/Bluetooth barcode scanner or phone keyboard scanner. Most scanners act like a keyboard and enter the barcode into the text box automatically.
+Buyer: `buyer@test.com`
 
-A production version should use a real camera barcode scanner and external music database lookups.
+Seller: `seller@test.com`
+
+Seller code: `test123`

@@ -1,20 +1,15 @@
-# Product Roadmap
+# V15 Product Roadmap
 
-## V15.8 Completed
+## V15.8.1 Completed
 
-- Barcode inventory fields
-- Barcode scanner/testing input
-- Barcode quick-add inventory workflow
-- Public seller feedback
-- Public buyer feedback
-- Buyer trust profile visible to sellers
-- Product pages show barcode/catalog metadata
+- Rebuilt barcode features from stable V15.7.1 base
+- Public trust/feedback added to buyer and seller flows
+- Verified SQL placeholder counts for product inserts
 
 ## Next
 
 - Real camera barcode scanner
 - Discogs/MusicBrainz barcode lookup
+- Better public buyer profile page
 - Conversation-style messaging
 - Real email notifications
-- Public buyer profile pages from marketplace
-- Trust score rules and badges

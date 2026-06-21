@@ -1,0 +1,2 @@
+barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,description,price,quantity,shipping_price,image_url
+602547234567,CAT-001,A1/B1,Vinyl Records,Demo Artist,Demo Album,Vinyl,Demo Label,1978,Soul,Sample product with barcode.,24.99,1,5.00,
