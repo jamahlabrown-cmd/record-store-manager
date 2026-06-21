@@ -1,13 +1,28 @@
-# House Of Wax V15 — Marketplace Platform Reset
+# House Of Wax V15.3 Clean Reset
 
-House Of Wax V15 resets the project as a seller-powered marketplace platform. House Of Wax is not the inventory owner. Sellers create stores, upload products, set prices, ship orders, and handle customer service. House Of Wax approves sellers, manages trust, reviews flagged listings, tracks buyer/seller accountability, and controls auction eligibility.
+This is a clean reset package built to replace the old broken `app.py`.
+
+The app should display:
+
+`Running V15.3 CLEAN RESET`
+
+near the top of every page. If you do not see that, Streamlit is still running an older file.
+
+## Model
+
+- House Of Wax is the platform.
+- Sellers apply and are approved.
+- Approved sellers run their own stores.
+- Sellers create their own policies.
+- Buyers register and are accountable.
+- Fixed-price listings do not require manual approval.
+- Listings can be flagged for admin review.
+- Auctions are earned by seller performance or admin override.
+
+## Admin Password
 
 Set Streamlit Secrets:
+
 ```toml
 ADMIN_PASSWORD = "your-private-password"
 ```
-
-
-## Fixed build note
-
-This package patches the original V15 build by placing `st.set_page_config` at the beginning of the app and making Streamlit Secrets loading safer for local/Codespaces testing.

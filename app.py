@@ -5,313 +5,1467 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-DB=Path('house_of_wax_v15.db')
-ADMIN_PASSWORD=st.secrets.get('ADMIN_PASSWORD','')
-APP='House Of Wax'
+st.set_page_config(
+    page_title="House Of Wax Marketplace",
+    page_icon="🎧",
+    layout="wide"
+)
 
-def conn(): return sqlite3.connect(DB)
-def q(sql, params=()):
-    c=conn(); c.execute(sql, params); c.commit(); c.close()
-def df(sql, params=()):
-    c=conn(); d=pd.read_sql_query(sql,c,params=params); c.close(); return d
-def table(t): return df(f'SELECT * FROM {t}')
-def now(): return datetime.now().isoformat(timespec='seconds')
-def money(x):
-    try: return f'${float(x):,.2f}'
-    except: return '$0.00'
+APP_VERSION = "V15.3 CLEAN RESET"
+APP_NAME = "House Of Wax"
+DB = Path("house_of_wax_v15_3.db")
 
-def setup():
-    c=conn(); cur=c.cursor()
-    cur.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
-    cur.execute('''CREATE TABLE IF NOT EXISTS buyers (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,email TEXT UNIQUE,phone TEXT,city TEXT,status TEXT DEFAULT 'New Buyer',rating REAL DEFAULT 100,completed_purchases INTEGER DEFAULT 0,unpaid_orders INTEGER DEFAULT 0,disputes INTEGER DEFAULT 0,strikes INTEGER DEFAULT 0,created_at TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS sellers (id INTEGER PRIMARY KEY AUTOINCREMENT,store_name TEXT NOT NULL,owner_name TEXT,email TEXT UNIQUE,phone TEXT,city TEXT,store_bio TEXT,logo_url TEXT,banner_url TEXT,status TEXT DEFAULT 'Pending',seller_level TEXT DEFAULT 'Starter Seller',rating REAL DEFAULT 100,completed_sales INTEGER DEFAULT 0,disputes INTEGER DEFAULT 0,strikes INTEGER DEFAULT 0,auction_override TEXT DEFAULT 'No',access_code TEXT,created_at TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS seller_policies (seller_id INTEGER PRIMARY KEY,shipping_policy TEXT,return_policy TEXT,grading_policy TEXT,customer_service_policy TEXT,bundle_policy TEXT,auction_policy TEXT,buyer_requirements TEXT,local_pickup_policy TEXT,international_shipping_policy TEXT,processing_time TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT,seller_id INTEGER,sku TEXT,barcode TEXT,catalog_number TEXT,matrix_runout TEXT,category TEXT,artist TEXT,title TEXT,format TEXT,label TEXT,release_year TEXT,genre TEXT,media_grade TEXT,sleeve_grade TEXT,condition_notes TEXT,description TEXT,price REAL DEFAULT 0,quantity INTEGER DEFAULT 1,shipping_price REAL DEFAULT 0,image_url TEXT,video_url TEXT,audio_url TEXT,external_release_url TEXT,listing_status TEXT DEFAULT 'Active',listing_type TEXT DEFAULT 'Fixed Price',created_at TEXT,updated_at TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,seller_id INTEGER,buyer_id INTEGER,order_type TEXT,status TEXT DEFAULT 'New',item_price REAL DEFAULT 0,shipping_price REAL DEFAULT 0,platform_fee REAL DEFAULT 0,seller_payout REAL DEFAULT 0,buyer_message TEXT,created_at TEXT,updated_at TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS listing_flags (id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,seller_id INTEGER,buyer_id INTEGER,reason TEXT,details TEXT,status TEXT DEFAULT 'Open',admin_notes TEXT,created_at TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS auctions (id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,seller_id INTEGER,auction_title TEXT,starting_bid REAL DEFAULT 0,reserve_price REAL DEFAULT 0,buy_now_price REAL DEFAULT 0,bid_increment REAL DEFAULT 1,start_time TEXT,end_time TEXT,status TEXT DEFAULT 'Draft',notes TEXT,created_at TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS bids (id INTEGER PRIMARY KEY AUTOINCREMENT,auction_id INTEGER,buyer_id INTEGER,bid_amount REAL,bid_time TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS disputes (id INTEGER PRIMARY KEY AUTOINCREMENT,order_id INTEGER,product_id INTEGER,seller_id INTEGER,buyer_id INTEGER,opened_by TEXT,reason TEXT,details TEXT,status TEXT DEFAULT 'Open',resolution TEXT,created_at TEXT,updated_at TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT,order_id INTEGER,reviewer_type TEXT,reviewer_id INTEGER,reviewee_type TEXT,reviewee_id INTEGER,rating INTEGER,comment TEXT,created_at TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS culture_posts (id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT,category TEXT,author TEXT,body TEXT,image_url TEXT,status TEXT DEFAULT 'Published',created_at TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS social_posts (id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,seller_id INTEGER,platform TEXT,caption TEXT,hashtags TEXT,status TEXT DEFAULT 'Draft',created_at TEXT,posted_at TEXT)''')
-    c.commit(); c.close()
-    defaults={'platform_commission_percent':'9','auction_commission_percent':'10','auction_min_completed_sales':'10','auction_min_rating':'90','site_tagline':'A seller-powered marketplace for records, clothing, music culture, and collectors.','announcement':'Sellers run their own stores. Buyers and sellers are both accountable. Auctions are earned.','logo_url':'','buyer_payment_window_hours':'48','default_processing_time':'3 business days'}
-    for k,v in defaults.items():
-        if df('SELECT * FROM settings WHERE key=?',(k,)).empty: q('INSERT INTO settings VALUES (?,?)',(k,v))
-setup()
+try:
+    ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
+except Exception:
+    ADMIN_PASSWORD = ""
 
-def setting(k,d=''):
-    r=df('SELECT value FROM settings WHERE key=?',(k,)); return d if r.empty else str(r.iloc[0].value)
-def set_setting(k,v): q('INSERT OR REPLACE INTO settings VALUES (?,?)',(k,str(v)))
-def fee(total,auction=False): return round(float(total)*float(setting('auction_commission_percent' if auction else 'platform_commission_percent','9'))/100,2)
-def desc(p):
-    ids=[]
-    for k,n in [('barcode','barcode'),('catalog_number','catalog #'),('matrix_runout','matrix/runout')]:
-        if p.get(k): ids.append(f"{n} {p.get(k)}")
-    return f"{p.get('artist','')} — {p.get('title','')} is a curated {p.get('format','item')} listing from an independent House Of Wax seller. Genre/style: {p.get('genre','not specified')}. Condition: media/product {p.get('media_grade','N/A')} and sleeve/packaging {p.get('sleeve_grade','N/A')}. {'Identifiers: '+', '.join(ids)+'.' if ids else ''} Seller notes: {p.get('condition_notes','')}. Buyers should review all photos, descriptions, seller policies, and shipping terms before purchasing or bidding."
-def quality(p):
-    checks=[float(p.get('price') or 0)>0,bool(p.get('image_url') or p.get('video_url') or p.get('audio_url')),bool(p.get('media_grade') or p.get('condition_notes')),bool(p.get('description') and len(str(p.get('description'))>120)),bool(p.get('barcode') or p.get('catalog_number') or p.get('matrix_runout')),bool(p.get('category')),p.get('listing_status')=='Active']
-    return int(sum(checks)/len(checks)*100)
-def seller_row(sid):
-    r=df('SELECT * FROM sellers WHERE id=?',(sid,)); return None if r.empty else r.iloc[0]
-def auction_ok(s):
-    if s is None: return False,'Seller not found.'
-    if s.status!='Approved': return False,'Seller must be approved first.'
-    if s.auction_override=='Yes': return True,'Auction access manually approved by House Of Wax.'
-    if int(s.completed_sales or 0)<int(float(setting('auction_min_completed_sales','10'))): return False,'Seller needs more completed sales.'
-    if float(s.rating or 0)<float(setting('auction_min_rating','90')): return False,'Seller rating is too low.'
-    if int(s.disputes or 0)>0 or int(s.strikes or 0)>0: return False,'Seller needs a clean dispute/strike record or admin override.'
-    return True,'Seller qualifies for auctions.'
-def buyer_ok(b):
-    if b is None: return False,'Buyer must register first.'
-    if b.status in ['Restricted Buyer','Suspended Buyer']: return False,'Buyer account is restricted.'
-    if int(b.unpaid_orders or 0)>=3: return False,'Buyer has too many unpaid orders.'
-    return True,'Buyer may purchase/bid.'
 
-def header():
-    c1,c2=st.columns([1,5])
-    logo=setting('logo_url')
-    with c1: st.image(logo,use_container_width=True) if logo else st.markdown('## 🎧')
-    with c2: st.title(APP); st.caption(setting('site_tagline'))
-    if setting('announcement'): st.info(setting('announcement'))
+# -----------------------------
+# Basic helpers
+# -----------------------------
+def now():
+    return datetime.now().isoformat(timespec="seconds")
 
-def product_card(p):
-    with st.container(border=True):
-        if p.get('image_url'): st.image(p.image_url,use_container_width=True)
-        elif p.get('video_url'): st.video(p.video_url)
-        else: st.markdown('### 🎵')
-        st.subheader(f"{p.get('artist','')} — {p.get('title','')}")
-        st.caption(f"{p.get('format','')} • {p.get('category','')} • {p.get('media_grade','')}")
-        st.write(f"**{money(p.get('price'))}** + shipping {money(p.get('shipping_price'))}")
-        st.progress(quality(p)/100,text=f"Listing quality {quality(p)}/100")
-        if st.button('View Item',key=f'view{p.id}'):
-            st.session_state.product=int(p.id); st.rerun()
 
-def product_detail(p):
-    if st.button('← Back'): st.session_state.pop('product',None); st.rerun()
-    s=seller_row(int(p.seller_id))
-    c1,c2=st.columns([1.2,1])
-    with c1:
-        if p.get('image_url'): st.image(p.image_url,use_container_width=True)
-        if p.get('video_url'): st.video(p.video_url)
-        if p.get('audio_url'): st.audio(p.audio_url)
-    with c2:
-        st.header(f"{p.artist} — {p.title}"); st.write(f"**Price:** {money(p.price)}"); st.write(f"**Seller:** {s.store_name if s is not None else 'Unknown'}"); st.write(f"**Condition:** {p.media_grade} / {p.sleeve_grade}"); st.caption(f"Barcode: {p.barcode or 'N/A'} • Catalog: {p.catalog_number or 'N/A'}")
-        if p.external_release_url: st.link_button('Release/research link',p.external_release_url)
-    st.subheader('Description'); st.write(p.description or desc(p))
-    if s is not None:
-        pol=df('SELECT * FROM seller_policies WHERE seller_id=?',(int(s.id),))
-        with st.expander('Seller store policies'):
-            if pol.empty: st.info('Seller has not added detailed policies yet; House Of Wax minimum rules still apply.')
-            else:
-                r=pol.iloc[0]
-                st.write('**Shipping:**',r.shipping_policy or 'Not provided'); st.write('**Returns:**',r.return_policy or 'Not provided'); st.write('**Grading:**',r.grading_policy or 'Not provided'); st.write('**Buyer requirements:**',r.buyer_requirements or 'Not provided')
-    st.divider(); st.subheader('Buy / Contact Seller')
-    buyers=table('buyers')
-    if buyers.empty: st.warning('Register as a buyer first.')
+def money(value):
+    try:
+        return f"${float(value):,.2f}"
+    except Exception:
+        return "$0.00"
+
+
+def connect():
+    return sqlite3.connect(DB)
+
+
+def run_sql(sql, params=()):
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute(sql, params)
+    conn.commit()
+    conn.close()
+
+
+def get_df(sql, params=()):
+    conn = connect()
+    df = pd.read_sql_query(sql, conn, params=params)
+    conn.close()
+    return df
+
+
+def get_table(table_name):
+    try:
+        return get_df(f"SELECT * FROM {table_name}")
+    except Exception:
+        return pd.DataFrame()
+
+
+def safe(value, fallback=""):
+    if value is None:
+        return fallback
+    try:
+        if pd.isna(value):
+            return fallback
+    except Exception:
+        pass
+    value = str(value)
+    if value.lower() in ["nan", "none"]:
+        return fallback
+    return value
+
+
+# -----------------------------
+# Database setup
+# -----------------------------
+def setup_database():
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sellers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            store_name TEXT NOT NULL,
+            owner_name TEXT,
+            email TEXT UNIQUE,
+            phone TEXT,
+            city TEXT,
+            store_bio TEXT,
+            logo_url TEXT,
+            banner_url TEXT,
+            status TEXT DEFAULT 'Pending',
+            seller_level TEXT DEFAULT 'Starter Seller',
+            rating REAL DEFAULT 100,
+            completed_sales INTEGER DEFAULT 0,
+            disputes INTEGER DEFAULT 0,
+            strikes INTEGER DEFAULT 0,
+            auction_override TEXT DEFAULT 'No',
+            access_code TEXT,
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS seller_policies (
+            seller_id INTEGER PRIMARY KEY,
+            shipping_policy TEXT,
+            return_policy TEXT,
+            grading_policy TEXT,
+            customer_service_policy TEXT,
+            bundle_policy TEXT,
+            auction_policy TEXT,
+            buyer_requirements TEXT,
+            local_pickup_policy TEXT,
+            international_shipping_policy TEXT,
+            processing_time TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS buyers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            email TEXT UNIQUE,
+            phone TEXT,
+            city TEXT,
+            status TEXT DEFAULT 'New Buyer',
+            rating REAL DEFAULT 100,
+            completed_purchases INTEGER DEFAULT 0,
+            unpaid_orders INTEGER DEFAULT 0,
+            disputes INTEGER DEFAULT 0,
+            strikes INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seller_id INTEGER,
+            sku TEXT,
+            barcode TEXT,
+            catalog_number TEXT,
+            matrix_runout TEXT,
+            category TEXT,
+            artist TEXT,
+            title TEXT,
+            format TEXT,
+            label TEXT,
+            release_year TEXT,
+            genre TEXT,
+            media_grade TEXT,
+            sleeve_grade TEXT,
+            condition_notes TEXT,
+            description TEXT,
+            price REAL DEFAULT 0,
+            quantity INTEGER DEFAULT 1,
+            shipping_price REAL DEFAULT 0,
+            image_url TEXT,
+            video_url TEXT,
+            audio_url TEXT,
+            external_release_url TEXT,
+            listing_status TEXT DEFAULT 'Active',
+            listing_type TEXT DEFAULT 'Fixed Price',
+            created_at TEXT,
+            updated_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER,
+            seller_id INTEGER,
+            buyer_id INTEGER,
+            order_type TEXT,
+            status TEXT DEFAULT 'New',
+            item_price REAL DEFAULT 0,
+            shipping_price REAL DEFAULT 0,
+            platform_fee REAL DEFAULT 0,
+            seller_payout REAL DEFAULT 0,
+            buyer_message TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS listing_flags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER,
+            seller_id INTEGER,
+            buyer_id INTEGER,
+            reason TEXT,
+            details TEXT,
+            status TEXT DEFAULT 'Open',
+            admin_notes TEXT,
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS auctions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER,
+            seller_id INTEGER,
+            auction_title TEXT,
+            starting_bid REAL DEFAULT 0,
+            reserve_price REAL DEFAULT 0,
+            buy_now_price REAL DEFAULT 0,
+            bid_increment REAL DEFAULT 1,
+            start_time TEXT,
+            end_time TEXT,
+            status TEXT DEFAULT 'Draft',
+            notes TEXT,
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bids (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            auction_id INTEGER,
+            buyer_id INTEGER,
+            bid_amount REAL,
+            bid_time TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS culture_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            category TEXT,
+            author TEXT,
+            body TEXT,
+            image_url TEXT,
+            status TEXT DEFAULT 'Published',
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS disputes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER,
+            product_id INTEGER,
+            seller_id INTEGER,
+            buyer_id INTEGER,
+            opened_by TEXT,
+            reason TEXT,
+            details TEXT,
+            status TEXT DEFAULT 'Open',
+            resolution TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS social_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER,
+            seller_id INTEGER,
+            platform TEXT,
+            caption TEXT,
+            hashtags TEXT,
+            status TEXT DEFAULT 'Draft',
+            created_at TEXT,
+            posted_at TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+    default_settings = {
+        "logo_url": "",
+        "site_tagline": "A seller-powered marketplace for records, music culture, clothing, and collectors.",
+        "announcement": "Sellers run their own stores. Buyers are accountable. House Of Wax protects the platform.",
+        "platform_commission_percent": "9",
+        "auction_commission_percent": "10",
+        "auction_min_completed_sales": "10",
+        "auction_min_rating": "90",
+        "default_processing_time": "3 business days",
+    }
+
+    for key, value in default_settings.items():
+        existing = get_df("SELECT value FROM settings WHERE key = ?", (key,))
+        if existing.empty:
+            run_sql("INSERT INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+
+setup_database()
+
+
+# -----------------------------
+# Settings and business logic
+# -----------------------------
+def get_setting(key, default=""):
+    df = get_df("SELECT value FROM settings WHERE key = ?", (key,))
+    if df.empty:
+        return default
+    return safe(df.iloc[0]["value"], default)
+
+
+def save_setting(key, value):
+    run_sql("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+
+
+def calculate_fee(total, auction=False):
+    if auction:
+        percent = float(get_setting("auction_commission_percent", "10"))
     else:
-        choice=st.selectbox('Buyer account',[f"{r.id} | {r.name} | {r.email} | {r.status}" for _,r in buyers.iterrows()])
-        bid=int(choice.split('|')[0]); b=buyers[buyers.id==bid].iloc[0]
-        action=st.selectbox('Action',['Buy Now Request','Ask Seller a Question','Make Offer'])
-        msg=st.text_area('Message')
-        if st.button('Submit'):
-            ok,reason=buyer_ok(b)
-            if action=='Buy Now Request' and not ok: st.error(reason)
-            else:
-                total=float(p.price or 0)+float(p.shipping_price or 0); f=fee(total); payout=round(total-f,2)
-                q('INSERT INTO orders (product_id,seller_id,buyer_id,order_type,status,item_price,shipping_price,platform_fee,seller_payout,buyer_message,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',(int(p.id),int(p.seller_id),bid,action,'New',float(p.price or 0),float(p.shipping_price or 0),f,payout,msg,now(),now()))
-                st.success('Sent to seller.')
-    with st.expander('Report this listing'):
-        reason=st.selectbox('Reason',['Counterfeit / Bootleg','Misgraded Condition','Wrong Information','Offensive Content','Spam / Scam','Prohibited Item','Other'])
-        details=st.text_area('Details')
-        if st.button('Submit report'):
-            q('INSERT INTO listing_flags (product_id,seller_id,buyer_id,reason,details,created_at) VALUES (?,?,?,?,?,?)',(int(p.id),int(p.seller_id),None,reason,details,now()))
-            q("UPDATE products SET listing_status='Flagged' WHERE id=?",(int(p.id),)); st.success('Flagged for review.')
+        percent = float(get_setting("platform_commission_percent", "9"))
+    return round(float(total) * percent / 100, 2)
 
-def marketplace():
-    header(); st.header('Marketplace')
-    products=df("SELECT * FROM products WHERE listing_status='Active' AND quantity>0 ORDER BY created_at DESC")
-    if 'product' in st.session_state:
-        r=products[products.id==st.session_state.product]
-        if not r.empty: product_detail(r.iloc[0]); return
-    if products.empty: st.info('No active listings yet.'); return
-    c1,c2,c3=st.columns(3); search=c1.text_input('Search'); cat=c2.selectbox('Category',['All']+sorted(products.category.dropna().unique().tolist())); sort=c3.selectbox('Sort',['Newest','Price Low','Price High','Artist A-Z'])
-    x=products.copy()
+
+def get_seller(seller_id):
+    if not seller_id:
+        return None
+    df = get_df("SELECT * FROM sellers WHERE id = ?", (int(seller_id),))
+    if df.empty:
+        return None
+    return df.iloc[0]
+
+
+def get_buyer(buyer_id):
+    if not buyer_id:
+        return None
+    df = get_df("SELECT * FROM buyers WHERE id = ?", (int(buyer_id),))
+    if df.empty:
+        return None
+    return df.iloc[0]
+
+
+def buyer_allowed(buyer):
+    if buyer is None:
+        return False, "A registered buyer account is required."
+    if buyer["status"] in ["Restricted Buyer", "Suspended Buyer"]:
+        return False, "This buyer account is restricted."
+    if int(buyer["unpaid_orders"] or 0) >= 3:
+        return False, "This buyer has too many unpaid orders."
+    return True, "Buyer allowed."
+
+
+def auction_eligible(seller):
+    if seller is None:
+        return False, "Seller not found."
+    if seller["status"] != "Approved":
+        return False, "Seller must be approved first."
+    if seller["auction_override"] == "Yes":
+        return True, "Auction access approved by House Of Wax Admin."
+    min_sales = int(float(get_setting("auction_min_completed_sales", "10")))
+    min_rating = float(get_setting("auction_min_rating", "90"))
+    if int(seller["completed_sales"] or 0) < min_sales:
+        return False, f"Needs at least {min_sales} completed sales."
+    if float(seller["rating"] or 0) < min_rating:
+        return False, f"Needs at least {min_rating}% seller rating."
+    if int(seller["strikes"] or 0) > 0:
+        return False, "Seller must have no strikes or receive admin override."
+    if int(seller["disputes"] or 0) > 0:
+        return False, "Seller must have no disputes or receive admin override."
+    return True, "Seller meets auction requirements."
+
+
+def generate_description(data):
+    artist = safe(data.get("artist"), "This listing")
+    title = safe(data.get("title"))
+    format_name = safe(data.get("format"), "music/culture item")
+    genre = safe(data.get("genre"))
+    label = safe(data.get("label"))
+    year = safe(data.get("release_year"))
+    media_grade = safe(data.get("media_grade"), "not specified")
+    sleeve_grade = safe(data.get("sleeve_grade"), "N/A")
+    barcode = safe(data.get("barcode"))
+    catalog = safe(data.get("catalog_number"))
+    matrix = safe(data.get("matrix_runout"))
+    notes = safe(data.get("condition_notes"))
+
+    description = f"{artist} — {title} is listed on House Of Wax as a curated {format_name} marketplace item."
+    if genre:
+        description += f" It is a strong fit for buyers interested in {genre}, collecting, and music culture."
+    if label or year:
+        description += f" Release details include {label or 'the listed label'}"
+        if year:
+            description += f" from {year}"
+        description += "."
+    description += f" Condition is listed as media/product grade {media_grade}, with sleeve or packaging grade {sleeve_grade}."
+
+    identifiers = []
+    if barcode:
+        identifiers.append(f"barcode {barcode}")
+    if catalog:
+        identifiers.append(f"catalog number {catalog}")
+    if matrix:
+        identifiers.append(f"matrix/runout {matrix}")
+    if identifiers:
+        description += " Key identifiers include " + ", ".join(identifiers) + "."
+    if notes:
+        description += f" Seller notes: {notes}"
+    description += " Buyers should review photos, grading notes, seller policies, shipping terms, and House Of Wax marketplace rules before buying or bidding."
+    return description
+
+
+def listing_score(product):
+    checks = {
+        "price": float(product.get("price") or 0) > 0,
+        "image or media": bool(safe(product.get("image_url")) or safe(product.get("video_url")) or safe(product.get("audio_url"))),
+        "condition": bool(safe(product.get("media_grade")) or safe(product.get("condition_notes"))),
+        "description": len(safe(product.get("description"))) > 100,
+        "identifier": bool(safe(product.get("barcode")) or safe(product.get("catalog_number")) or safe(product.get("matrix_runout"))),
+        "category": bool(safe(product.get("category"))),
+        "active": safe(product.get("listing_status")) == "Active",
+    }
+    score = int(sum(checks.values()) / len(checks) * 100)
+    missing = [key for key, passed in checks.items() if not passed]
+    return score, missing
+
+
+# -----------------------------
+# Safe UI helpers
+# -----------------------------
+def render_header():
+    logo_url = get_setting("logo_url", "").strip()
+    tagline = get_setting("site_tagline", "")
+    announcement = get_setting("announcement", "")
+
+    col_logo, col_text = st.columns([1, 5])
+    with col_logo:
+        if logo_url:
+            st.image(logo_url, use_container_width=True)
+        else:
+            st.markdown("## 🎧")
+
+    with col_text:
+        st.title(APP_NAME)
+        st.caption(tagline)
+        st.caption(f"Running {APP_VERSION}")
+
+    if announcement:
+        st.info(announcement)
+
+
+def choose_buyer(key_prefix):
+    buyers = get_table("buyers")
+    if buyers.empty:
+        st.warning("No buyers registered yet. Register as a buyer first.")
+        return None
+
+    options = []
+    for _, row in buyers.iterrows():
+        label = f"{int(row['id'])} | {safe(row['name'])} | {safe(row['email'])} | {safe(row['status'])}"
+        options.append(label)
+
+    selected = st.selectbox("Buyer account", options, key=f"{key_prefix}_buyer")
+    buyer_id = int(selected.split("|")[0].strip())
+    return buyer_id
+
+
+def product_card(product):
+    seller = get_seller(product["seller_id"])
+    if seller is None:
+        seller_name = "Unknown Seller"
+    else:
+        seller_name = safe(seller["store_name"], "Seller")
+
+    with st.container(border=True):
+        image_url = safe(product.get("image_url"))
+        if image_url:
+            st.image(image_url, use_container_width=True)
+        else:
+            st.markdown("### 🎵")
+
+        st.markdown(f"### {safe(product.get('artist'))} — {safe(product.get('title'))}")
+        st.caption(f"{safe(product.get('format'))} • {safe(product.get('genre'))} • Seller: {seller_name}")
+        st.write(f"**Price:** {money(product.get('price'))}")
+        st.write(f"**Condition:** {safe(product.get('media_grade'), 'Not graded')}")
+
+        score, missing = listing_score(product)
+        st.progress(score / 100, text=f"Listing quality: {score}/100")
+
+        if st.button("View Item", key=f"view_product_{int(product['id'])}"):
+            st.session_state["selected_product_id"] = int(product["id"])
+            st.rerun()
+
+
+def product_detail(product):
+    if st.button("← Back to Marketplace"):
+        if "selected_product_id" in st.session_state:
+            del st.session_state["selected_product_id"]
+        st.rerun()
+
+    seller = get_seller(product["seller_id"])
+
+    left, right = st.columns([1.2, 1])
+    with left:
+        image_url = safe(product.get("image_url"))
+        video_url = safe(product.get("video_url"))
+        audio_url = safe(product.get("audio_url"))
+
+        if image_url:
+            st.image(image_url, use_container_width=True)
+        elif video_url:
+            st.video(video_url)
+        else:
+            st.markdown("## 🎵")
+
+        if audio_url:
+            st.audio(audio_url)
+
+    with right:
+        st.header(f"{safe(product.get('artist'))} — {safe(product.get('title'))}")
+        st.write(f"**Price:** {money(product.get('price'))}")
+        st.write(f"**Shipping:** {money(product.get('shipping_price'))}")
+
+        if seller is not None:
+            st.write(f"**Seller:** {safe(seller['store_name'])}")
+        else:
+            st.write("**Seller:** Unknown")
+
+        st.write(f"**Category:** {safe(product.get('category'))}")
+        st.write(f"**Format:** {safe(product.get('format'))}")
+        st.write(f"**Condition:** {safe(product.get('media_grade'), 'N/A')} / Sleeve-Packaging: {safe(product.get('sleeve_grade'), 'N/A')}")
+
+        identifiers = []
+        if safe(product.get("barcode")):
+            identifiers.append(f"Barcode: {safe(product.get('barcode'))}")
+        if safe(product.get("catalog_number")):
+            identifiers.append(f"Catalog #: {safe(product.get('catalog_number'))}")
+        if safe(product.get("matrix_runout")):
+            identifiers.append(f"Matrix/Runout: {safe(product.get('matrix_runout'))}")
+        if identifiers:
+            st.caption(" • ".join(identifiers))
+
+        external_url = safe(product.get("external_release_url"))
+        if external_url:
+            st.link_button("Research / Release Link", external_url)
+
+    st.subheader("Description")
+    description = safe(product.get("description"))
+    if not description:
+        description = generate_description(product)
+    st.write(description)
+
+    if seller is not None:
+        with st.expander("Seller Store Policies"):
+            policies = get_df("SELECT * FROM seller_policies WHERE seller_id = ?", (int(seller["id"]),))
+            if policies.empty:
+                st.info("This seller has not added detailed policies yet. House Of Wax minimum platform rules still apply.")
+            else:
+                policy = policies.iloc[0]
+                st.write("**Shipping:**", safe(policy.get("shipping_policy"), "Not provided"))
+                st.write("**Returns:**", safe(policy.get("return_policy"), "Not provided"))
+                st.write("**Grading:**", safe(policy.get("grading_policy"), "Not provided"))
+                st.write("**Buyer Requirements:**", safe(policy.get("buyer_requirements"), "Not provided"))
+
+    st.divider()
+    st.subheader("Buy / Contact Seller")
+    buyer_id = choose_buyer(f"buy_{int(product['id'])}")
+    action = st.selectbox("Action", ["Buy Now Request", "Ask a Question", "Make Offer"], key=f"action_{int(product['id'])}")
+    message = st.text_area("Message to seller", key=f"message_{int(product['id'])}")
+
+    if st.button("Submit to Seller", key=f"submit_{int(product['id'])}"):
+        if buyer_id is None:
+            st.error("Register as a buyer first.")
+        else:
+            buyer = get_buyer(buyer_id)
+            allowed, reason = buyer_allowed(buyer)
+
+            if action == "Buy Now Request" and not allowed:
+                st.error(reason)
+            else:
+                item_price = float(product.get("price") or 0)
+                shipping_price = float(product.get("shipping_price") or 0)
+                total = item_price + shipping_price
+                fee = calculate_fee(total, auction=False)
+                payout = total - fee
+
+                run_sql("""
+                    INSERT INTO orders
+                    (product_id, seller_id, buyer_id, order_type, status, item_price, shipping_price, platform_fee, seller_payout, buyer_message, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'New', ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    int(product["id"]),
+                    int(product["seller_id"]),
+                    int(buyer_id),
+                    action,
+                    item_price,
+                    shipping_price,
+                    fee,
+                    payout,
+                    message,
+                    now(),
+                    now(),
+                ))
+                st.success("Sent to seller.")
+
+    with st.expander("Report this listing"):
+        reason = st.selectbox(
+            "Report reason",
+            ["Counterfeit / Bootleg", "Misgraded Condition", "Wrong Information", "Offensive Content", "Spam / Scam", "Prohibited Item", "Other"],
+            key=f"flag_reason_{int(product['id'])}"
+        )
+        details = st.text_area("Details", key=f"flag_details_{int(product['id'])}")
+        flag_buyer_id = choose_buyer(f"flag_{int(product['id'])}")
+
+        if st.button("Submit Report", key=f"flag_button_{int(product['id'])}"):
+            if flag_buyer_id is None:
+                st.error("Register as a buyer before reporting.")
+            else:
+                run_sql("""
+                    INSERT INTO listing_flags
+                    (product_id, seller_id, buyer_id, reason, details, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'Open', ?)
+                """, (
+                    int(product["id"]),
+                    int(product["seller_id"]),
+                    int(flag_buyer_id),
+                    reason,
+                    details,
+                    now(),
+                ))
+                run_sql("UPDATE products SET listing_status = 'Flagged' WHERE id = ?", (int(product["id"]),))
+                st.success("Listing reported to House Of Wax.")
+
+
+# -----------------------------
+# Public pages
+# -----------------------------
+def home_page():
+    render_header()
+
+    products = get_table("products")
+    sellers = get_table("sellers")
+    buyers = get_table("buyers")
+    auctions = get_table("auctions")
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Listings", len(products))
+    col2.metric("Sellers", len(sellers))
+    col3.metric("Buyers", len(buyers))
+    col4.metric("Auctions", len(auctions))
+
+    st.markdown("""
+    ## A seller-powered music and culture marketplace.
+
+    House Of Wax lets independent sellers build their own stores, upload their own products, set prices, manage shipping, and handle customer service.
+
+    House Of Wax controls the platform rules, seller approval, buyer accountability, flagged listing review, fees, auction eligibility, and music-culture experience.
+    """)
+
+
+def marketplace_page():
+    render_header()
+    st.header("Marketplace")
+
+    products = get_df("SELECT * FROM products WHERE listing_status = 'Active' AND quantity > 0 ORDER BY created_at DESC")
+    if products.empty:
+        st.info("No active marketplace listings yet.")
+        return
+
+    if "selected_product_id" in st.session_state:
+        selected = products[products["id"] == int(st.session_state["selected_product_id"])]
+        if not selected.empty:
+            product_detail(selected.iloc[0])
+            return
+        del st.session_state["selected_product_id"]
+
+    col1, col2, col3 = st.columns(3)
+    search = col1.text_input("Search")
+    categories = ["All"] + sorted([str(x) for x in products["category"].dropna().unique().tolist() if str(x).strip()])
+    category = col2.selectbox("Category", categories)
+    sort = col3.selectbox("Sort", ["Newest", "Price Low", "Price High", "Artist A-Z"])
+
+    filtered = products.copy()
+
     if search:
-        ss=search.lower(); x=x[x.artist.fillna('').str.lower().str.contains(ss)|x.title.fillna('').str.lower().str.contains(ss)|x.barcode.fillna('').str.lower().str.contains(ss)|x.catalog_number.fillna('').str.lower().str.contains(ss)]
-    if cat!='All': x=x[x.category==cat]
-    if sort=='Price Low': x=x.sort_values('price')
-    elif sort=='Price High': x=x.sort_values('price',ascending=False)
-    elif sort=='Artist A-Z': x=x.sort_values('artist')
-    cols=st.columns(3)
-    for i,(_,p) in enumerate(x.iterrows()):
-        with cols[i%3]: product_card(p)
+        term = search.lower()
+        mask = (
+            filtered["artist"].fillna("").str.lower().str.contains(term) |
+            filtered["title"].fillna("").str.lower().str.contains(term) |
+            filtered["barcode"].fillna("").str.lower().str.contains(term) |
+            filtered["catalog_number"].fillna("").str.lower().str.contains(term)
+        )
+        filtered = filtered[mask]
 
-def register():
-    header(); st.header('Register / Sell')
-    t1,t2=st.tabs(['Buyer Registration','Seller Application'])
-    with t1:
-        with st.form('buyer'):
-            name=st.text_input('Name'); email=st.text_input('Email'); phone=st.text_input('Phone'); city=st.text_input('City')
-            if st.form_submit_button('Register Buyer'):
-                try: q('INSERT INTO buyers (name,email,phone,city,created_at) VALUES (?,?,?,?,?)',(name,email,phone,city,now())); st.success('Buyer registered.')
-                except Exception as e: st.error(e)
-    with t2:
-        st.write('Sellers must be approved. Once approved, fixed-price listings go live without product-by-product approval. Bad listings can be flagged.')
-        with st.form('seller'):
-            store=st.text_input('Store name'); owner=st.text_input('Owner'); email=st.text_input('Email'); phone=st.text_input('Phone'); city=st.text_input('City'); bio=st.text_area('Store bio'); code=st.text_input('Private seller access code'); agree=st.checkbox('I agree to House Of Wax platform rules.')
-            if st.form_submit_button('Apply'):
-                if not agree: st.error('Must agree.')
-                else:
-                    try: q('INSERT INTO sellers (store_name,owner_name,email,phone,city,store_bio,access_code,created_at) VALUES (?,?,?,?,?,?,?,?)',(store,owner,email,phone,city,bio,code,now())); st.success('Seller application submitted.')
-                    except Exception as e: st.error(e)
+    if category != "All":
+        filtered = filtered[filtered["category"] == category]
 
-def seller_dash():
-    header(); st.header('Seller Dashboard')
-    email=st.text_input('Seller email'); code=st.text_input('Access code',type='password')
-    if not st.button('Enter'): return
-    s=df('SELECT * FROM sellers WHERE email=? AND access_code=?',(email,code))
-    if s.empty: st.error('Seller not found.'); return
-    s=s.iloc[0]
-    if s.status!='Approved': st.warning(f'Seller status: {s.status}. Admin must approve before selling.'); return
-    st.success(f'Logged in as {s.store_name}')
-    tabs=st.tabs(['My Store','Store Policies','Add Product','My Listings','Auctions','Orders','Social Posts','Rules'])
-    sid=int(s.id)
-    with tabs[0]:
-        with st.form('profile'):
-            store=st.text_input('Store name',value=s.store_name); bio=st.text_area('Bio',value=s.store_bio or ''); logo=st.text_input('Logo URL',value=s.logo_url or ''); banner=st.text_input('Banner URL',value=s.banner_url or '')
-            if st.form_submit_button('Save'): q('UPDATE sellers SET store_name=?,store_bio=?,logo_url=?,banner_url=? WHERE id=?',(store,bio,logo,banner,sid)); st.success('Saved.')
-    with tabs[1]:
-        pol=df('SELECT * FROM seller_policies WHERE seller_id=?',(sid,)); r=pol.iloc[0] if not pol.empty else {}
-        with st.form('pol'):
-            shipping=st.text_area('Shipping policy',value=r.get('shipping_policy','') if len(r) else ''); returns=st.text_area('Return policy',value=r.get('return_policy','') if len(r) else ''); grading=st.text_area('Grading policy',value=r.get('grading_policy','') if len(r) else ''); service=st.text_area('Customer service policy',value=r.get('customer_service_policy','') if len(r) else ''); bundle=st.text_area('Bundle policy',value=r.get('bundle_policy','') if len(r) else ''); auction_policy=st.text_area('Auction policy',value=r.get('auction_policy','') if len(r) else ''); buyer_req=st.text_area('Buyer requirements',value=r.get('buyer_requirements','Buyer must be registered, in good standing, and pay within payment window.') if len(r) else 'Buyer must be registered, in good standing, and pay within payment window.'); pickup=st.text_area('Local pickup policy',value=r.get('local_pickup_policy','') if len(r) else ''); intl=st.text_area('International shipping policy',value=r.get('international_shipping_policy','') if len(r) else ''); processing=st.text_input('Processing time',value=r.get('processing_time',setting('default_processing_time')) if len(r) else setting('default_processing_time'))
-            if st.form_submit_button('Save Policies'): q('INSERT OR REPLACE INTO seller_policies VALUES (?,?,?,?,?,?,?,?,?,?,?)',(sid,shipping,returns,grading,service,bundle,auction_policy,buyer_req,pickup,intl,processing)); st.success('Policies saved.')
-    with tabs[2]:
-        with st.form('prod'):
-            c1,c2,c3=st.columns(3); sku=c1.text_input('SKU'); barcode=c2.text_input('Barcode/UPC/EAN'); catalog=c3.text_input('Catalog number')
-            matrix=st.text_input('Matrix/runout'); category=st.selectbox('Category',['Vinyl Records','CDs','Cassettes','Music DVDs/VHS','Music Books/Magazines','Posters','Music Memorabilia','Vintage Clothing','Streetwear','Band Tees','DJ Gear/Accessories','Culture Goods']); artist=st.text_input('Artist/Brand'); title=st.text_input('Title/Product'); fmt=st.text_input('Format',value='Vinyl'); label=st.text_input('Label/Brand'); year=st.text_input('Year'); genre=st.text_input('Genre/Style'); media=st.selectbox('Media/Product grade',['Mint','Near Mint','VG+','VG','Good','Fair','Poor','New','Used','N/A']); sleeve=st.selectbox('Sleeve/Packaging grade',['Mint','Near Mint','VG+','VG','Good','Fair','Poor','New','Used','N/A']); notes=st.text_area('Condition notes')
-            generated=desc({'artist':artist,'title':title,'format':fmt,'genre':genre,'label':label,'release_year':year,'media_grade':media,'sleeve_grade':sleeve,'catalog_number':catalog,'barcode':barcode,'matrix_runout':matrix,'condition_notes':notes})
-            description=st.text_area('Description',value=generated,height=170); price=st.number_input('Price',min_value=0.0,step=0.01); qty=st.number_input('Quantity',min_value=1,value=1); ship=st.number_input('Shipping price',min_value=0.0,step=0.01); image=st.text_input('Image URL'); video=st.text_input('Video URL'); audio=st.text_input('Audio URL'); ext=st.text_input('Discogs/MusicBrainz/Popsike URL'); status=st.selectbox('Status',['Active','Draft'])
-            if st.form_submit_button('Publish Product'):
-                q('INSERT INTO products (seller_id,sku,barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,video_url,audio_url,external_release_url,listing_status,listing_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(sid,sku,barcode,catalog,matrix,category,artist,title,fmt,label,year,genre,media,sleeve,notes,description,price,qty,ship,image,video,audio,ext,status,'Fixed Price',now(),now())); st.success('Product saved.')
-    with tabs[3]:
-        prods=df('SELECT * FROM products WHERE seller_id=? ORDER BY created_at DESC',(sid,)); st.dataframe(prods,use_container_width=True)
-        if not prods.empty:
-            pid=st.selectbox('Product ID',prods.id.tolist()); status=st.selectbox('New status',['Active','Draft','Sold','Removed'])
-            if st.button('Update status'): q('UPDATE products SET listing_status=?,updated_at=? WHERE id=? AND seller_id=?',(status,now(),int(pid),sid)); st.success('Updated.')
-    with tabs[4]:
-        ok,reason=auction_ok(s); st.info(f'Auction eligible: {ok}. {reason}')
-        prods=df("SELECT * FROM products WHERE seller_id=? AND listing_status='Active'",(sid,))
-        if ok and not prods.empty:
-            with st.form('auc'):
-                pid=st.selectbox('Product',prods.id.tolist()); title=st.text_input('Auction title'); start=st.number_input('Starting bid',min_value=0.0,step=1.0); reserve=st.number_input('Reserve',min_value=0.0,step=1.0); buy=st.number_input('Buy now',min_value=0.0,step=1.0); inc=st.number_input('Bid increment',min_value=1.0,step=1.0); end=st.text_input('End time'); status=st.selectbox('Status',['Draft','Live']); notes=st.text_area('Notes')
-                if st.form_submit_button('Create Auction'): q('INSERT INTO auctions (product_id,seller_id,auction_title,starting_bid,reserve_price,buy_now_price,bid_increment,start_time,end_time,status,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',(int(pid),sid,title,start,reserve,buy,inc,now(),end,status,notes,now())); st.success('Auction created.')
-        st.dataframe(df('SELECT * FROM auctions WHERE seller_id=?',(sid,)),use_container_width=True)
-    with tabs[5]: st.dataframe(df('SELECT * FROM orders WHERE seller_id=? ORDER BY created_at DESC',(sid,)),use_container_width=True)
-    with tabs[6]: st.write('Generate post copy from listings. Full social automation can be connected later.'); st.dataframe(df('SELECT * FROM social_posts WHERE seller_id=?',(sid,)),use_container_width=True)
-    with tabs[7]: st.markdown('Seller rules can be stronger than House Of Wax rules, but never weaker. Sellers handle upload, pricing, shipping, customer service, and store policies.')
+    if sort == "Price Low":
+        filtered = filtered.sort_values("price")
+    elif sort == "Price High":
+        filtered = filtered.sort_values("price", ascending=False)
+    elif sort == "Artist A-Z":
+        filtered = filtered.sort_values("artist")
 
-def auctions():
-    header(); st.header('Auctions'); st.caption('Sellers earn auctions through sales, rating, and platform history.')
-    a=df("SELECT a.*,p.artist,p.title,p.image_url,s.store_name FROM auctions a LEFT JOIN products p ON a.product_id=p.id LEFT JOIN sellers s ON a.seller_id=s.id WHERE a.status='Live'")
-    if a.empty: st.info('No live auctions.'); return
-    buyers=table('buyers')
-    for _,r in a.iterrows():
+    columns = st.columns(3)
+    for index, (_, product) in enumerate(filtered.iterrows()):
+        with columns[index % 3]:
+            product_card(product)
+
+
+def auctions_page():
+    render_header()
+    st.header("Auctions")
+    st.caption("Auctions are earned by seller performance. Sellers do not get auction access automatically.")
+
+    auctions = get_df("""
+        SELECT a.*, p.artist, p.title, p.image_url, s.store_name
+        FROM auctions a
+        LEFT JOIN products p ON a.product_id = p.id
+        LEFT JOIN sellers s ON a.seller_id = s.id
+        WHERE a.status = 'Live'
+        ORDER BY a.end_time
+    """)
+
+    if auctions.empty:
+        st.info("No live auctions yet.")
+        return
+
+    for _, auction in auctions.iterrows():
         with st.container(border=True):
-            if r.image_url: st.image(r.image_url,use_container_width=True)
-            st.subheader(r.auction_title); st.caption(f"{r.artist} — {r.title} • Seller: {r.store_name}")
-            high=df('SELECT MAX(bid_amount) h FROM bids WHERE auction_id=?',(int(r.id),)).iloc[0].h; current=high if pd.notna(high) else r.starting_bid
-            st.write(f'Current bid: {money(current)}')
-            if buyers.empty: st.warning('Register as buyer first.')
+            image_url = safe(auction.get("image_url"))
+            if image_url:
+                st.image(image_url, width=250)
+
+            st.subheader(safe(auction.get("auction_title")))
+            st.caption(f"{safe(auction.get('artist'))} — {safe(auction.get('title'))} • Seller: {safe(auction.get('store_name'))}")
+
+            high = get_df("SELECT MAX(bid_amount) AS high_bid FROM bids WHERE auction_id = ?", (int(auction["id"]),))
+            high_bid = high.iloc[0]["high_bid"]
+            if pd.notna(high_bid):
+                current_bid = float(high_bid)
             else:
-                choice=st.selectbox('Buyer',[f"{b.id} | {b.name} | {b.status}" for _,b in buyers.iterrows()],key=f'buyer{r.id}'); bid=int(choice.split('|')[0]); br=buyers[buyers.id==bid].iloc[0]; amount=st.number_input('Bid amount',min_value=float(current)+float(r.bid_increment),step=float(r.bid_increment),key=f'amt{r.id}')
-                if st.button('Place Bid',key=f'pb{r.id}'):
-                    ok,reason=buyer_ok(br)
-                    if not ok: st.error(reason)
-                    else: q('INSERT INTO bids VALUES (NULL,?,?,?,?)',(int(r.id),bid,amount,now())); st.success('Bid placed.')
+                current_bid = float(auction["starting_bid"] or 0)
 
-def stores():
-    header(); st.header('Seller Stores')
-    sellers=df("SELECT * FROM sellers WHERE status='Approved' ORDER BY store_name")
-    if sellers.empty: st.info('No approved seller stores yet.'); return
-    for _,s in sellers.iterrows():
+            st.write(f"**Current bid:** {money(current_bid)}")
+            st.write(f"**Ends:** {safe(auction.get('end_time'))}")
+
+            buyer_id = choose_buyer(f"auction_{int(auction['id'])}")
+            next_bid = st.number_input(
+                "Bid amount",
+                min_value=current_bid + float(auction["bid_increment"] or 1),
+                step=float(auction["bid_increment"] or 1),
+                key=f"bid_amount_{int(auction['id'])}"
+            )
+
+            if st.button("Place Bid", key=f"place_bid_{int(auction['id'])}"):
+                if buyer_id is None:
+                    st.error("Register as a buyer first.")
+                else:
+                    buyer = get_buyer(buyer_id)
+                    allowed, reason = buyer_allowed(buyer)
+                    if not allowed:
+                        st.error(reason)
+                    else:
+                        run_sql(
+                            "INSERT INTO bids (auction_id, buyer_id, bid_amount, bid_time) VALUES (?, ?, ?, ?)",
+                            (int(auction["id"]), int(buyer_id), float(next_bid), now())
+                        )
+                        st.success("Bid placed.")
+
+
+def seller_stores_page():
+    render_header()
+    st.header("Seller Stores")
+
+    sellers = get_df("SELECT * FROM sellers WHERE status = 'Approved' ORDER BY store_name")
+    if sellers.empty:
+        st.info("No approved seller stores yet.")
+        return
+
+    for _, seller in sellers.iterrows():
         with st.container(border=True):
-            if s.banner_url: st.image(s.banner_url,use_container_width=True)
-            st.subheader(s.store_name); st.caption(f"{s.seller_level} • Rating {s.rating}% • Sales {s.completed_sales}"); st.write(s.store_bio or '')
+            banner_url = safe(seller.get("banner_url"))
+            if banner_url:
+                st.image(banner_url, use_container_width=True)
 
-def culture():
-    header(); st.header('Music + Culture')
-    posts=df("SELECT * FROM culture_posts WHERE status='Published' ORDER BY created_at DESC")
-    if posts.empty: st.info('No culture posts yet. Use Admin to publish seller spotlights, music guides, clothing/culture stories, auction previews, and collecting education.')
-    for _,p in posts.iterrows():
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                logo_url = safe(seller.get("logo_url"))
+                if logo_url:
+                    st.image(logo_url, use_container_width=True)
+                else:
+                    st.markdown("### 🏪")
+
+            with col2:
+                st.subheader(safe(seller.get("store_name")))
+                st.caption(f"{safe(seller.get('seller_level'))} • Rating {seller.get('rating')}% • Sales {seller.get('completed_sales')}")
+                st.write(safe(seller.get("store_bio"), "Independent seller on House Of Wax."))
+
+
+def culture_page():
+    render_header()
+    st.header("Music + Culture")
+
+    posts = get_df("SELECT * FROM culture_posts WHERE status = 'Published' ORDER BY created_at DESC")
+    if posts.empty:
+        st.info("No culture posts yet. Admin can add artist stories, collecting guides, seller spotlights, clothing/culture posts, and auction previews.")
+        return
+
+    for _, post in posts.iterrows():
         with st.container(border=True):
-            if p.image_url: st.image(p.image_url,use_container_width=True)
-            st.subheader(p.title); st.caption(f'{p.category} • {p.author}'); st.write(p.body)
+            image_url = safe(post.get("image_url"))
+            if image_url:
+                st.image(image_url, use_container_width=True)
+            st.subheader(safe(post.get("title")))
+            st.caption(f"{safe(post.get('category'))} • {safe(post.get('author'))}")
+            st.write(safe(post.get("body")))
 
-def admin():
-    header(); st.header('House Of Wax Platform Admin')
-    pw=st.text_input('Admin password',type='password')
-    if not st.button('Login'): return
-    if not ADMIN_PASSWORD: st.error('Set ADMIN_PASSWORD in Streamlit Secrets.'); return
-    if pw!=ADMIN_PASSWORD: st.error('Wrong password.'); return
-    tabs=st.tabs(['Overview','Seller Applications','Sellers','Buyers','Flagged Listings','Orders','Disputes','Auctions','Culture','Settings','Reports','Business Plan'])
+
+def register_page():
+    render_header()
+    st.header("Register / Sell on House Of Wax")
+
+    buyer_tab, seller_tab = st.tabs(["Buyer Registration", "Seller Application"])
+
+    with buyer_tab:
+        st.subheader("Create Buyer Account")
+        with st.form("buyer_registration"):
+            name = st.text_input("Full name")
+            email = st.text_input("Email")
+            phone = st.text_input("Phone")
+            city = st.text_input("City")
+            submitted = st.form_submit_button("Register Buyer")
+
+        if submitted:
+            if not name or not email:
+                st.error("Name and email are required.")
+            else:
+                try:
+                    run_sql(
+                        "INSERT INTO buyers (name, email, phone, city, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (name, email, phone, city, now())
+                    )
+                    st.success("Buyer account created.")
+                except Exception as error:
+                    st.error(f"Could not create buyer: {error}")
+
+    with seller_tab:
+        st.subheader("Apply to Sell")
+        st.write("Sellers are approved by House Of Wax. Once approved, sellers can publish fixed-price listings without every product being manually approved.")
+
+        with st.form("seller_application"):
+            store_name = st.text_input("Store name")
+            owner = st.text_input("Owner name")
+            email = st.text_input("Seller email")
+            phone = st.text_input("Phone")
+            city = st.text_input("City")
+            bio = st.text_area("Store bio / what you sell")
+            access_code = st.text_input("Choose private seller access code", type="password")
+            agree = st.checkbox("I agree to House Of Wax platform rules. My store policies can be stronger than platform rules, but never weaker.")
+            submitted = st.form_submit_button("Submit Seller Application")
+
+        if submitted:
+            if not store_name or not email or not access_code:
+                st.error("Store name, email, and access code are required.")
+            elif not agree:
+                st.error("You must agree to platform rules.")
+            else:
+                try:
+                    run_sql("""
+                        INSERT INTO sellers
+                        (store_name, owner_name, email, phone, city, store_bio, access_code, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (store_name, owner, email, phone, city, bio, access_code, now()))
+                    st.success("Seller application submitted.")
+                except Exception as error:
+                    st.error(f"Could not submit seller application: {error}")
+
+
+# -----------------------------
+# Seller dashboard
+# -----------------------------
+def seller_dashboard_page():
+    render_header()
+    st.header("Seller Dashboard")
+
+    email = st.text_input("Seller email")
+    access_code = st.text_input("Seller access code", type="password")
+
+    if not st.button("Enter Seller Dashboard"):
+        return
+
+    seller_df = get_df("SELECT * FROM sellers WHERE email = ? AND access_code = ?", (email, access_code))
+    if seller_df.empty:
+        st.error("Seller not found or access code is wrong.")
+        return
+
+    seller = seller_df.iloc[0]
+    if seller["status"] != "Approved":
+        st.warning(f"Seller status is {seller['status']}. House Of Wax Admin must approve your store before you can sell.")
+        return
+
+    seller_workspace(seller)
+
+
+def seller_workspace(seller):
+    seller_id = int(seller["id"])
+    st.success(f"Logged in as {seller['store_name']}")
+
+    tabs = st.tabs([
+        "My Store",
+        "Store Policies",
+        "Add Product",
+        "My Listings",
+        "My Auctions",
+        "Orders",
+        "Social Posts",
+        "Rules"
+    ])
+
     with tabs[0]:
-        c1,c2,c3,c4=st.columns(4); c1.metric('Sellers',len(table('sellers'))); c2.metric('Buyers',len(table('buyers'))); c3.metric('Listings',len(table('products'))); c4.metric('Flags',len(table('listing_flags')))
-        st.info('V15 rule: approve sellers, not every listing. Flag problems. Auctions are earned. Buyers are accountable too.')
-    with tabs[1]:
-        pending=df("SELECT * FROM sellers WHERE status='Pending'"); st.dataframe(pending,use_container_width=True)
-        if not pending.empty:
-            sid=st.selectbox('Seller ID',pending.id.tolist()); action=st.selectbox('Decision',['Approved','Rejected'])
-            if st.button('Apply decision'): q('UPDATE sellers SET status=?,seller_level=? WHERE id=?',(action,'Approved Seller' if action=='Approved' else 'Rejected',int(sid))); st.success('Updated.')
-    with tabs[2]:
-        sellers=table('sellers'); st.dataframe(sellers,use_container_width=True)
-        if not sellers.empty:
-            sid=st.selectbox('Manage seller ID',sellers.id.tolist()); status=st.selectbox('Status',['Pending','Approved','Suspended','Rejected','Verified']); override=st.selectbox('Auction override',['No','Yes']); sales=st.number_input('Completed sales',min_value=0,step=1); rating=st.number_input('Rating',0.0,100.0,100.0); strikes=st.number_input('Strikes',min_value=0,step=1); disputes=st.number_input('Disputes',min_value=0,step=1)
-            if st.button('Update seller'): q('UPDATE sellers SET status=?,auction_override=?,completed_sales=?,rating=?,strikes=?,disputes=? WHERE id=?',(status,override,sales,rating,strikes,disputes,int(sid))); st.success('Seller updated.')
-    with tabs[3]:
-        buyers=table('buyers'); st.dataframe(buyers,use_container_width=True)
-        if not buyers.empty:
-            bid=st.selectbox('Buyer ID',buyers.id.tolist()); status=st.selectbox('Buyer status',['New Buyer','Verified Buyer','Trusted Buyer','Restricted Buyer','Suspended Buyer']); rating=st.number_input('Buyer rating',0.0,100.0,100.0); unpaid=st.number_input('Unpaid orders',min_value=0,step=1); strikes=st.number_input('Buyer strikes',min_value=0,step=1)
-            if st.button('Update buyer'): q('UPDATE buyers SET status=?,rating=?,unpaid_orders=?,strikes=? WHERE id=?',(status,rating,unpaid,strikes,int(bid))); st.success('Buyer updated.')
-    with tabs[4]:
-        flags=df('SELECT f.*,p.artist,p.title,s.store_name FROM listing_flags f LEFT JOIN products p ON f.product_id=p.id LEFT JOIN sellers s ON f.seller_id=s.id ORDER BY f.created_at DESC'); st.dataframe(flags,use_container_width=True)
-        if not flags.empty:
-            fid=st.selectbox('Flag ID',flags.id.tolist()); decision=st.selectbox('Decision',['Dismiss','Keep Under Review','Remove Listing','Suspend Seller','Issue Strike']); notes=st.text_area('Admin notes')
-            if st.button('Resolve flag'):
-                row=flags[flags.id==fid].iloc[0]
-                if decision=='Remove Listing': q("UPDATE products SET listing_status='Removed' WHERE id=?",(int(row.product_id),))
-                if decision=='Suspend Seller': q("UPDATE sellers SET status='Suspended' WHERE id=?",(int(row.seller_id),))
-                if decision=='Issue Strike': q('UPDATE sellers SET strikes=strikes+1 WHERE id=?',(int(row.seller_id),))
-                q('UPDATE listing_flags SET status=?,admin_notes=? WHERE id=?',(decision,notes,int(fid))); st.success('Resolved.')
-    with tabs[5]:
-        orders=table('orders'); st.dataframe(orders,use_container_width=True)
-        if not orders.empty:
-            oid=st.selectbox('Order ID',orders.id.tolist()); status=st.selectbox('Order status',['New','Contacted','Invoice Sent','Paid','Shipped','Completed','Cancelled','Disputed'])
-            if st.button('Update order'): q('UPDATE orders SET status=?,updated_at=? WHERE id=?',(status,now(),int(oid))); st.success('Order updated.')
-    with tabs[6]: st.dataframe(table('disputes'),use_container_width=True)
-    with tabs[7]: st.dataframe(table('auctions'),use_container_width=True)
-    with tabs[8]:
-        with st.form('culture'):
-            title=st.text_input('Title'); cat=st.selectbox('Category',['Music','Clothing','Culture','Collecting Guide','Seller Spotlight','Auction Preview','Regional History']); author=st.text_input('Author',value='House Of Wax'); img=st.text_input('Image URL'); body=st.text_area('Body')
-            if st.form_submit_button('Publish'): q('INSERT INTO culture_posts (title,category,author,body,image_url,created_at) VALUES (?,?,?,?,?,?)',(title,cat,author,body,img,now())); st.success('Published.')
-    with tabs[9]:
-        for k in ['platform_commission_percent','auction_commission_percent','auction_min_completed_sales','auction_min_rating','site_tagline','announcement','logo_url','buyer_payment_window_hours','default_processing_time']:
-            val=st.text_input(k,value=setting(k),key=k)
-            if st.button(f'Save {k}',key=f'save{k}'): set_setting(k,val); st.success('Saved.')
-    with tabs[10]:
-        choice=st.selectbox('Table',['buyers','sellers','seller_policies','products','orders','listing_flags','auctions','bids','feedback','disputes','culture_posts','social_posts','settings']); data=table(choice); st.dataframe(data,use_container_width=True); st.download_button('Download CSV',data.to_csv(index=False),f'{choice}.csv')
-    with tabs[11]: st.markdown('Business plan, budget, revenue model, policy summary, buyer policy, seller policy, and roadmap are included as files in this V15 package.')
+        st.subheader("My Store")
+        with st.form("store_profile"):
+            store_name = st.text_input("Store name", value=safe(seller.get("store_name")))
+            bio = st.text_area("Store bio", value=safe(seller.get("store_bio")))
+            logo = st.text_input("Logo URL", value=safe(seller.get("logo_url")))
+            banner = st.text_input("Banner URL", value=safe(seller.get("banner_url")))
+            submitted = st.form_submit_button("Save Store Profile")
 
-st.set_page_config(page_title='House Of Wax Marketplace',layout='wide')
-menu=st.sidebar.radio('House Of Wax',['Home','Marketplace','Auctions','Seller Stores','Music + Culture','Register / Sell','Seller Dashboard','Admin Login'])
-if menu=='Home':
-    header(); st.markdown('## Seller-powered music and culture marketplace'); st.write('House Of Wax is a platform where approved sellers create their own stores, upload products, set prices, ship orders, and handle customer service. House Of Wax manages rules, ratings, flagged listings, buyer/seller accountability, culture content, and auction access.');
-    c1,c2,c3=st.columns(3); c1.metric('Active listings',len(df("SELECT * FROM products WHERE listing_status='Active'"))); c2.metric('Approved sellers',len(df("SELECT * FROM sellers WHERE status='Approved'"))); c3.metric('Registered buyers',len(table('buyers')))
-elif menu=='Marketplace': marketplace()
-elif menu=='Auctions': auctions()
-elif menu=='Seller Stores': stores()
-elif menu=='Music + Culture': culture()
-elif menu=='Register / Sell': register()
-elif menu=='Seller Dashboard': seller_dash()
-elif menu=='Admin Login': admin()
+        if submitted:
+            run_sql(
+                "UPDATE sellers SET store_name=?, store_bio=?, logo_url=?, banner_url=? WHERE id=?",
+                (store_name, bio, logo, banner, seller_id)
+            )
+            st.success("Store profile saved.")
+
+    with tabs[1]:
+        st.subheader("Store Policies")
+        policy_df = get_df("SELECT * FROM seller_policies WHERE seller_id = ?", (seller_id,))
+        if policy_df.empty:
+            policy = {}
+        else:
+            policy = policy_df.iloc[0]
+
+        with st.form("store_policies"):
+            shipping = st.text_area("Shipping policy", value=safe(policy.get("shipping_policy") if len(policy) else ""))
+            returns = st.text_area("Return policy", value=safe(policy.get("return_policy") if len(policy) else ""))
+            grading = st.text_area("Condition/grading policy", value=safe(policy.get("grading_policy") if len(policy) else ""))
+            service = st.text_area("Customer service policy", value=safe(policy.get("customer_service_policy") if len(policy) else ""))
+            bundle = st.text_area("Bundle/discount policy", value=safe(policy.get("bundle_policy") if len(policy) else ""))
+            auction_policy = st.text_area("Auction policy", value=safe(policy.get("auction_policy") if len(policy) else ""))
+            buyer_requirements = st.text_area("Buyer requirements", value=safe(policy.get("buyer_requirements") if len(policy) else "Buyer must be registered and in good standing."))
+            pickup = st.text_area("Local pickup policy", value=safe(policy.get("local_pickup_policy") if len(policy) else ""))
+            international = st.text_area("International shipping policy", value=safe(policy.get("international_shipping_policy") if len(policy) else ""))
+            processing = st.text_input("Processing time", value=safe(policy.get("processing_time") if len(policy) else get_setting("default_processing_time", "3 business days")))
+            submitted = st.form_submit_button("Save Policies")
+
+        if submitted:
+            run_sql("""
+                INSERT OR REPLACE INTO seller_policies
+                (seller_id, shipping_policy, return_policy, grading_policy, customer_service_policy, bundle_policy, auction_policy, buyer_requirements, local_pickup_policy, international_shipping_policy, processing_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                seller_id,
+                shipping,
+                returns,
+                grading,
+                service,
+                bundle,
+                auction_policy,
+                buyer_requirements,
+                pickup,
+                international,
+                processing,
+            ))
+            st.success("Store policies saved.")
+
+    with tabs[2]:
+        st.subheader("Add Product")
+        with st.form("add_product"):
+            col1, col2, col3 = st.columns(3)
+            sku = col1.text_input("SKU")
+            barcode = col2.text_input("Barcode / UPC / EAN")
+            catalog = col3.text_input("Catalog number")
+
+            matrix = st.text_input("Matrix / runout")
+
+            col4, col5, col6 = st.columns(3)
+            category = col4.selectbox("Category", [
+                "Vinyl Records",
+                "CDs",
+                "Cassettes",
+                "Music DVDs/VHS",
+                "Music Books/Magazines",
+                "Posters",
+                "Music Memorabilia",
+                "Vintage Clothing",
+                "Streetwear",
+                "Band Tees",
+                "DJ Gear/Accessories",
+                "Culture Goods"
+            ])
+            artist = col5.text_input("Artist / Brand")
+            title = col6.text_input("Title / Product Name")
+
+            col7, col8, col9 = st.columns(3)
+            format_name = col7.text_input("Format", value="Vinyl")
+            label = col8.text_input("Label / Brand")
+            year = col9.text_input("Year")
+
+            genre = st.text_input("Genre / Style")
+
+            col10, col11 = st.columns(2)
+            media_grade = col10.selectbox("Media/Product grade", ["Mint", "Near Mint", "VG+", "VG", "Good", "Fair", "Poor", "New", "Used", "N/A"])
+            sleeve_grade = col11.selectbox("Sleeve/Packaging grade", ["Mint", "Near Mint", "VG+", "VG", "Good", "Fair", "Poor", "New", "Used", "N/A"])
+
+            notes = st.text_area("Condition notes")
+
+            generated = generate_description({
+                "artist": artist,
+                "title": title,
+                "format": format_name,
+                "genre": genre,
+                "label": label,
+                "release_year": year,
+                "media_grade": media_grade,
+                "sleeve_grade": sleeve_grade,
+                "barcode": barcode,
+                "catalog_number": catalog,
+                "matrix_runout": matrix,
+                "condition_notes": notes,
+            })
+            description = st.text_area("Description", value=generated, height=180)
+
+            col12, col13, col14 = st.columns(3)
+            price = col12.number_input("Price", min_value=0.0, step=0.01)
+            quantity = col13.number_input("Quantity", min_value=1, value=1)
+            shipping_price = col14.number_input("Shipping price", min_value=0.0, step=0.01)
+
+            image_url = st.text_input("Main image URL")
+            video_url = st.text_input("Video URL")
+            audio_url = st.text_input("Audio URL")
+            external_url = st.text_input("Discogs / MusicBrainz / research URL")
+            status = st.selectbox("Listing status", ["Active", "Draft"])
+
+            submitted = st.form_submit_button("Save Product")
+
+        if submitted:
+            run_sql("""
+                INSERT INTO products
+                (seller_id, sku, barcode, catalog_number, matrix_runout, category, artist, title, format, label, release_year, genre, media_grade, sleeve_grade, condition_notes, description, price, quantity, shipping_price, image_url, video_url, audio_url, external_release_url, listing_status, listing_type, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Fixed Price', ?, ?)
+            """, (
+                seller_id,
+                sku,
+                barcode,
+                catalog,
+                matrix,
+                category,
+                artist,
+                title,
+                format_name,
+                label,
+                year,
+                genre,
+                media_grade,
+                sleeve_grade,
+                notes,
+                description,
+                float(price),
+                int(quantity),
+                float(shipping_price),
+                image_url,
+                video_url,
+                audio_url,
+                external_url,
+                status,
+                now(),
+                now(),
+            ))
+            st.success("Product saved. Approved sellers can publish fixed-price listings without manual approval.")
+
+    with tabs[3]:
+        st.subheader("My Listings")
+        products = get_df("SELECT * FROM products WHERE seller_id = ? ORDER BY created_at DESC", (seller_id,))
+        st.dataframe(products, use_container_width=True)
+
+        if not products.empty:
+            product_id = st.selectbox("Product ID", products["id"].tolist())
+            new_status = st.selectbox("New status", ["Active", "Draft", "Sold", "Removed"])
+            if st.button("Update Listing Status"):
+                run_sql(
+                    "UPDATE products SET listing_status=?, updated_at=? WHERE id=? AND seller_id=?",
+                    (new_status, now(), int(product_id), seller_id)
+                )
+                st.success("Listing updated.")
+
+    with tabs[4]:
+        st.subheader("My Auctions")
+        eligible, reason = auction_eligible(seller)
+        if eligible:
+            st.success(f"Auction eligible: {reason}")
+        else:
+            st.warning(f"Not auction eligible yet: {reason}")
+
+        products = get_df("SELECT * FROM products WHERE seller_id = ? AND listing_status = 'Active'", (seller_id,))
+        if eligible and not products.empty:
+            with st.form("create_auction"):
+                product_id = st.selectbox("Product", products["id"].tolist())
+                auction_title = st.text_input("Auction title")
+                col1, col2, col3, col4 = st.columns(4)
+                starting_bid = col1.number_input("Starting bid", min_value=0.0, step=1.0)
+                reserve_price = col2.number_input("Reserve price", min_value=0.0, step=1.0)
+                buy_now_price = col3.number_input("Buy-now price", min_value=0.0, step=1.0)
+                bid_increment = col4.number_input("Bid increment", min_value=1.0, step=1.0)
+                start_time = st.text_input("Start time", value=now())
+                end_time = st.text_input("End time")
+                status = st.selectbox("Auction status", ["Draft", "Live"])
+                notes = st.text_area("Auction notes")
+                submitted = st.form_submit_button("Create Auction")
+
+            if submitted:
+                run_sql("""
+                    INSERT INTO auctions
+                    (product_id, seller_id, auction_title, starting_bid, reserve_price, buy_now_price, bid_increment, start_time, end_time, status, notes, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    int(product_id),
+                    seller_id,
+                    auction_title,
+                    starting_bid,
+                    reserve_price,
+                    buy_now_price,
+                    bid_increment,
+                    start_time,
+                    end_time,
+                    status,
+                    notes,
+                    now(),
+                ))
+                st.success("Auction saved.")
+
+        st.dataframe(get_df("SELECT * FROM auctions WHERE seller_id = ?", (seller_id,)), use_container_width=True)
+
+    with tabs[5]:
+        st.subheader("Orders")
+        st.dataframe(get_df("SELECT * FROM orders WHERE seller_id = ? ORDER BY created_at DESC", (seller_id,)), use_container_width=True)
+
+    with tabs[6]:
+        st.subheader("Social Posts")
+        products = get_df("SELECT * FROM products WHERE seller_id = ?", (seller_id,))
+        if products.empty:
+            st.info("Add a product first.")
+        else:
+            product_id = st.selectbox("Product to promote", products["id"].tolist())
+            product = products[products["id"] == product_id].iloc[0]
+            caption = f"Now on House Of Wax: {safe(product.get('artist'))} — {safe(product.get('title'))}. Condition: {safe(product.get('media_grade'))}. Price: {money(product.get('price'))}."
+            hashtags = "#HouseOfWax #MusicMarketplace #VinylMarketplace #MusicCulture"
+
+            st.text_area("Caption", value=caption, height=120)
+            st.text_input("Hashtags", value=hashtags)
+            platform = st.selectbox("Platform", ["Instagram", "TikTok", "Facebook", "X", "Email", "Buffer Queue"])
+
+            if st.button("Save Social Draft"):
+                run_sql(
+                    "INSERT INTO social_posts (product_id, seller_id, platform, caption, hashtags, status, created_at) VALUES (?, ?, ?, ?, ?, 'Draft', ?)",
+                    (int(product_id), seller_id, platform, caption, hashtags, now())
+                )
+                st.success("Social draft saved.")
+
+    with tabs[7]:
+        st.subheader("Rules")
+        st.markdown("""
+        **Seller freedom:** Sellers can create shipping, returns, grading, customer service, bundle, auction, local pickup, international shipping, and buyer requirement policies.
+
+        **House Of Wax minimum:** Seller rules can be stronger or more generous than platform rules, but never weaker.
+        """)
+
+
+# -----------------------------
+# Admin
+# -----------------------------
+def admin_page():
+    render_header()
+    st.header("Admin Login")
+
+    password = st.text_input("Admin password", type="password")
+    if not st.button("Login Admin"):
+        return
+
+    if not ADMIN_PASSWORD:
+        st.error("Admin password is not set in Streamlit Secrets.")
+        return
+
+    if password != ADMIN_PASSWORD:
+        st.error("Wrong password.")
+        return
+
+    admin_workspace()
+
+
+def admin_workspace():
+    tabs = st.tabs([
+        "Overview",
+        "Seller Applications",
+        "Seller Management",
+        "Buyer Management",
+        "Flagged Listings",
+        "Orders",
+        "Auctions",
+        "Culture Content",
+        "Fees & Settings",
+        "Reports",
+        "Business Planning"
+    ])
+
+    with tabs[0]:
+        st.subheader("Platform Overview")
+        sellers = get_table("sellers")
+        buyers = get_table("buyers")
+        products = get_table("products")
+        orders = get_table("orders")
+        flags = get_table("listing_flags")
+
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Sellers", len(sellers))
+        col2.metric("Buyers", len(buyers))
+        col3.metric("Products", len(products))
+        col4.metric("Orders", len(orders))
+
+        if flags.empty:
+            open_flags = 0
+        else:
+            open_flags = len(flags[flags["status"] == "Open"])
+        col5.metric("Open Flags", open_flags)
+
+        st.success(f"Admin loaded successfully. Running {APP_VERSION}.")
+        st.info("House Of Wax approves sellers, not every product. Bad listings are flagged for review. Auctions are earned through seller performance.")
+
+    with tabs[1]:
+        st.subheader("Seller Applications")
+        pending = get_df("SELECT * FROM sellers WHERE status = 'Pending'")
+        st.dataframe(pending, use_container_width=True)
+
+        if not pending.empty:
+            seller_id = st.selectbox("Seller ID to review", pending["id"].tolist())
+            decision = st.selectbox("Decision", ["Approved", "Rejected"])
+            if st.button("Save Seller Decision"):
+                if decision == "Approved":
+                    level = "Approved Seller"
+                else:
+                    level = "Rejected"
+                run_sql(
+                    "UPDATE sellers SET status=?, seller_level=? WHERE id=?",
+                    (decision, level, int(seller_id))
+                )
+                st.success("Seller updated.")
+
+    with tabs[2]:
+        st.subheader("Seller Management")
+        sellers = get_table("sellers")
+        st.dataframe(sellers, use_container_width=True)
+
+        if not sellers.empty:
+            seller_id = st.selectbox("Manage seller ID", sellers["id"].tolist(), key="admin_seller")
+            status = st.selectbox("Seller status", ["Pending", "Approved", "Suspended", "Rejected", "Verified"])
+            auction_override = st.selectbox("Auction override", ["No", "Yes"])
+            completed_sales = st.number_input("Completed sales", min_value=0, step=1)
+            rating = st.number_input("Seller rating", min_value=0.0, max_value=100.0, value=100.0)
+            strikes = st.number_input("Seller strikes", min_value=0, step=1)
+            disputes = st.number_input("Seller disputes", min_value=0, step=1)
+
+            if st.button("Update Seller"):
+                run_sql(
+                    "UPDATE sellers SET status=?, auction_override=?, completed_sales=?, rating=?, strikes=?, disputes=? WHERE id=?",
+                    (status, auction_override, int(completed_sales), float(rating), int(strikes), int(disputes), int(seller_id))
+                )
+                st.success("Seller updated.")
+
+    with tabs[3]:
+        st.subheader("Buyer Management")
+        buyers = get_table("buyers")
+        st.dataframe(buyers, use_container_width=True)
+
+        if not buyers.empty:
+            buyer_id = st.selectbox("Manage buyer ID", buyers["id"].tolist(), key="admin_buyer")
+            status = st.selectbox("Buyer status", ["New Buyer", "Verified Buyer", "Trusted Buyer", "Restricted Buyer", "Suspended Buyer"])
+            rating = st.number_input("Buyer rating", min_value=0.0, max_value=100.0, value=100.0, key="buyer_rating_admin")
+            unpaid = st.number_input("Unpaid orders", min_value=0, step=1)
+            strikes = st.number_input("Buyer strikes", min_value=0, step=1, key="buyer_strikes_admin")
+
+            if st.button("Update Buyer"):
+                run_sql(
+                    "UPDATE buyers SET status=?, rating=?, unpaid_orders=?, strikes=? WHERE id=?",
+                    (status, float(rating), int(unpaid), int(strikes), int(buyer_id))
+                )
+                st.success("Buyer updated.")
+
+    with tabs[4]:
+        st.subheader("Flagged Listings")
+        flags = get_df("""
+            SELECT f.*, p.artist, p.title, s.store_name
+            FROM listing_flags f
+            LEFT JOIN products p ON f.product_id = p.id
+            LEFT JOIN sellers s ON f.seller_id = s.id
+            ORDER BY f.created_at DESC
+        """)
+        st.dataframe(flags, use_container_width=True)
+
+        if not flags.empty:
+            flag_id = st.selectbox("Flag ID", flags["id"].tolist())
+            decision = st.selectbox("Decision", ["Dismiss", "Keep Under Review", "Remove Listing", "Suspend Seller", "Issue Seller Strike"])
+            notes = st.text_area("Admin notes")
+
+            if st.button("Resolve Flag"):
+                flag = flags[flags["id"] == flag_id].iloc[0]
+
+                if decision == "Remove Listing":
+                    run_sql("UPDATE products SET listing_status = 'Removed' WHERE id = ?", (int(flag["product_id"]),))
+
+                if decision == "Suspend Seller":
+                    run_sql("UPDATE sellers SET status = 'Suspended' WHERE id = ?", (int(flag["seller_id"]),))
+
+                if decision == "Issue Seller Strike":
+                    run_sql("UPDATE sellers SET strikes = strikes + 1 WHERE id = ?", (int(flag["seller_id"]),))
+
+                run_sql(
+                    "UPDATE listing_flags SET status=?, admin_notes=? WHERE id=?",
+                    (decision, notes, int(flag_id))
+                )
+                st.success("Flag resolved.")
+
+    with tabs[5]:
+        st.subheader("Orders")
+        orders = get_table("orders")
+        st.dataframe(orders, use_container_width=True)
+
+        if not orders.empty:
+            order_id = st.selectbox("Order ID", orders["id"].tolist())
+            status = st.selectbox("Order status", ["New", "Contacted", "Invoice Sent", "Paid", "Shipped", "Completed", "Cancelled", "Disputed"])
+
+            if st.button("Update Order"):
+                run_sql(
+                    "UPDATE orders SET status=?, updated_at=? WHERE id=?",
+                    (status, now(), int(order_id))
+                )
+
+                if status == "Completed":
+                    order = orders[orders["id"] == order_id].iloc[0]
+                    run_sql("UPDATE sellers SET completed_sales = completed_sales + 1 WHERE id = ?", (int(order["seller_id"]),))
+                    run_sql("UPDATE buyers SET completed_purchases = completed_purchases + 1 WHERE id = ?", (int(order["buyer_id"]),))
+
+                st.success("Order updated.")
+
+    with tabs[6]:
+        st.subheader("Auctions")
+        st.dataframe(get_table("auctions"), use_container_width=True)
+
+    with tabs[7]:
+        st.subheader("Culture Content")
+        with st.form("culture_form"):
+            title = st.text_input("Title")
+            category = st.selectbox("Category", ["Music", "Clothing", "Culture", "Collecting Guide", "Seller Spotlight", "Auction Preview", "Regional History"])
+            author = st.text_input("Author", value="House Of Wax")
+            image_url = st.text_input("Image URL")
+            body = st.text_area("Body", height=200)
+            submitted = st.form_submit_button("Publish Culture Post")
+
+        if submitted:
+            run_sql(
+                "INSERT INTO culture_posts (title, category, author, body, image_url, status, created_at) VALUES (?, ?, ?, ?, ?, 'Published', ?)",
+                (title, category, author, body, image_url, now())
+            )
+            st.success("Culture post published.")
+
+        st.dataframe(get_table("culture_posts"), use_container_width=True)
+
+    with tabs[8]:
+        st.subheader("Fees & Settings")
+        with st.form("settings_form"):
+            commission = st.text_input("Platform commission %", value=get_setting("platform_commission_percent", "9"))
+            auction_commission = st.text_input("Auction commission %", value=get_setting("auction_commission_percent", "10"))
+            min_sales = st.text_input("Auction minimum completed sales", value=get_setting("auction_min_completed_sales", "10"))
+            min_rating = st.text_input("Auction minimum seller rating", value=get_setting("auction_min_rating", "90"))
+            logo_url = st.text_input("Logo URL", value=get_setting("logo_url", ""))
+            tagline = st.text_input("Site tagline", value=get_setting("site_tagline", ""))
+            announcement = st.text_area("Announcement", value=get_setting("announcement", ""))
+            submitted = st.form_submit_button("Save Settings")
+
+        if submitted:
+            save_setting("platform_commission_percent", commission)
+            save_setting("auction_commission_percent", auction_commission)
+            save_setting("auction_min_completed_sales", min_sales)
+            save_setting("auction_min_rating", min_rating)
+            save_setting("logo_url", logo_url)
+            save_setting("site_tagline", tagline)
+            save_setting("announcement", announcement)
+            st.success("Settings saved.")
+
+    with tabs[9]:
+        st.subheader("Reports")
+        report = st.selectbox("Report", [
+            "sellers",
+            "seller_policies",
+            "buyers",
+            "products",
+            "orders",
+            "listing_flags",
+            "auctions",
+            "bids",
+            "culture_posts",
+            "disputes",
+            "social_posts",
+        ])
+        data = get_table(report)
+        st.dataframe(data, use_container_width=True)
+        csv = data.to_csv(index=False)
+        st.download_button("Download CSV", csv, file_name=f"{report}.csv")
+
+    with tabs[10]:
+        st.subheader("Business Planning")
+        st.markdown("""
+        This package includes:
+
+        - HOUSE_OF_WAX_BUSINESS_PLAN_DRAFT.md
+        - STARTUP_BUDGET_DRAFT.md
+        - REVENUE_MODEL_DRAFT.md
+        - MARKETPLACE_POLICY_SUMMARY.md
+        - BUYER_POLICY_DRAFT.md
+        - SELLER_POLICY_DRAFT.md
+        - V15_PRODUCT_ROADMAP.md
+        """)
+
+
+# -----------------------------
+# Navigation
+# -----------------------------
+menu = st.sidebar.radio(
+    "House Of Wax",
+    [
+        "Home",
+        "Marketplace",
+        "Auctions",
+        "Seller Stores",
+        "Music + Culture",
+        "Register / Sell",
+        "Seller Dashboard",
+        "Admin Login",
+    ]
+)
+
+if menu == "Home":
+    home_page()
+elif menu == "Marketplace":
+    marketplace_page()
+elif menu == "Auctions":
+    auctions_page()
+elif menu == "Seller Stores":
+    seller_stores_page()
+elif menu == "Music + Culture":
+    culture_page()
+elif menu == "Register / Sell":
+    register_page()
+elif menu == "Seller Dashboard":
+    seller_dashboard_page()
+elif menu == "Admin Login":
+    admin_page()
