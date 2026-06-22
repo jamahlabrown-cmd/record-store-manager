@@ -1,27 +1,28 @@
-# House Of Wax V25.4 Barcode Lookup Diagnostics
+# House Of Wax V25.5 Search Fallback Upgrade
 
 You should see:
 
-`Running V25.4 BARCODE LOOKUP DIAGNOSTICS`
+`Running V25.5 SEARCH FALLBACK UPGRADE`
 
 ## What changed
 
-Instead of only saying "No lookup match found," the app now shows a diagnostic table explaining:
+Barcode-only lookup can miss popular artists if the exact barcode is not in MusicBrainz or if Discogs is not connected.
 
-- barcode entered
-- cleaned barcode value
-- barcode length status
-- House Of Wax release database result
-- lookup cache result
-- Discogs connection status
-- Discogs result or no result
-- MusicBrainz result or no result
-- final recommendation
+V25.5 adds:
+- artist/title fallback search
+- Discogs text search
+- MusicBrainz text search
+- standalone Barcode Diagnostics with artist/title search
+- better fallback when barcode lookup returns nothing
 
-## New Testing Mode tool
+## Recommended test
 
-Turn on Testing mode, then go to:
+Try:
+- Artist: Lady Gaga
+- Title: The Fame
 
-My House of Wax → Barcode Diagnostics
+or:
+- Artist: Lady Gaga
+- Title: Born This Way
 
-Use this page to test barcodes without creating a listing.
+Then choose a release candidate and auto-fill the listing draft.

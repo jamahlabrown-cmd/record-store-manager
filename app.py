@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25.4 BARCODE LOOKUP DIAGNOSTICS'
+APP_VERSION='V25.5 SEARCH FALLBACK UPGRADE'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -1244,6 +1244,193 @@ def barcode_length_status(barcode):
         return f'Valid barcode length ({len(code)} digits)'
     return f'Unusual barcode length ({len(code)} digits)'
 
+
+def lookup_musicbrainz_text_search(artist='', title='', barcode=''):
+    artist=safe(artist)
+    title=safe(title)
+    barcode=normalize_barcode(barcode)
+    query_parts=[]
+    if barcode:
+        query_parts.append(f'barcode:{barcode}')
+    if artist:
+        query_parts.append(f'artist:"{artist}"')
+    if title:
+        query_parts.append(f'release:"{title}"')
+    if not query_parts and (artist or title):
+        query_parts.append(f'{artist} {title}'.strip())
+    if not query_parts:
+        return []
+    try:
+        url='https://musicbrainz.org/ws/2/release/'
+        params={'query':' AND '.join(query_parts),'fmt':'json','limit':10}
+        headers={'User-Agent':'HouseOfWaxPrototype/1.0 (prototype lookup)'}
+        r=requests.get(url,params=params,headers=headers,timeout=10)
+        if r.status_code!=200:
+            return []
+        data=r.json()
+        results=[]
+        for rel in data.get('releases',[])[:10]:
+            rel_artist=''
+            credits=rel.get('artist-credit') or []
+            if credits:
+                parts=[]
+                for c in credits:
+                    if isinstance(c,dict):
+                        if 'artist' in c and isinstance(c['artist'],dict):
+                            parts.append(c['artist'].get('name',''))
+                        elif 'name' in c:
+                            parts.append(c.get('name',''))
+                rel_artist=' '.join([p for p in parts if p]).strip()
+            label=''
+            cat=''
+            infos=rel.get('label-info') or []
+            if infos:
+                first=infos[0] or {}
+                label=(first.get('label') or {}).get('name','') if isinstance(first.get('label'),dict) else ''
+                cat=first.get('catalog-number','')
+            fmt=''
+            media=rel.get('media') or []
+            if media:
+                fmt=media[0].get('format','')
+            year=safe(rel.get('date'))[:4]
+            rid=safe(rel.get('id'))
+            cover=f'https://coverartarchive.org/release/{rid}/front-500' if rid else ''
+            ext=f'https://musicbrainz.org/release/{rid}' if rid else ''
+            results.append({
+                'source':'MusicBrainz',
+                'external_id':rid,
+                'artist':rel_artist,
+                'title':safe(rel.get('title')),
+                'format':fmt,
+                'label':label,
+                'release_year':year,
+                'country':safe(rel.get('country')),
+                'genre':'',
+                'style':'',
+                'catalog_number':cat,
+                'image_url':cover,
+                'external_url':ext,
+                'raw_summary':'MusicBrainz artist/title search match'
+            })
+        return results
+    except Exception:
+        return []
+
+def lookup_discogs_text_search(artist='', title='', barcode=''):
+    artist=safe(artist)
+    title=safe(title)
+    barcode=normalize_barcode(barcode)
+    token=''
+    try:
+        token=st.secrets.get('DISCOGS_TOKEN','')
+    except Exception:
+        token=''
+    try:
+        url='https://api.discogs.com/database/search'
+        query=' '.join([artist,title]).strip()
+        params={'type':'release','per_page':10}
+        if barcode:
+            params['barcode']=barcode
+        if query:
+            params['q']=query
+        if token:
+            params['token']=token
+        headers={'User-Agent':'HouseOfWaxPrototype/1.0'}
+        r=requests.get(url,params=params,headers=headers,timeout=10)
+        if r.status_code!=200:
+            return []
+        data=r.json()
+        results=[]
+        for item in data.get('results',[])[:10]:
+            full=safe(item.get('title'))
+            rel_artist=''
+            album=full
+            if ' - ' in full:
+                rel_artist,album=full.split(' - ',1)
+            formats=item.get('format') or []
+            labels=item.get('label') or []
+            genres=item.get('genre') or []
+            styles=item.get('style') or []
+            rid=safe(item.get('id'))
+            results.append({
+                'source':'Discogs',
+                'external_id':rid,
+                'artist':rel_artist,
+                'title':album,
+                'format':', '.join(formats) if isinstance(formats,list) else safe(formats),
+                'label':', '.join(labels) if isinstance(labels,list) else safe(labels),
+                'release_year':safe(item.get('year')),
+                'country':safe(item.get('country')),
+                'genre':', '.join(genres) if isinstance(genres,list) else safe(genres),
+                'style':', '.join(styles) if isinstance(styles,list) else safe(styles),
+                'catalog_number':'',
+                'image_url':safe(item.get('cover_image')) or safe(item.get('thumb')),
+                'external_url':f'https://www.discogs.com/release/{rid}' if rid else '',
+                'raw_summary':'Discogs search match'
+            })
+        return results
+    except Exception:
+        return []
+
+def lookup_by_artist_title_with_diagnostics(artist='', title='', barcode=''):
+    diagnostics=[]
+    artist=safe(artist)
+    title=safe(title)
+    code=normalize_barcode(barcode)
+    diagnostics.append({'Step':'Search terms','Status':f'Artist: {artist or "blank"} | Title: {title or "blank"} | Barcode: {code or "blank"}','Details':'Text search is used when barcode-only lookup does not find a match.'})
+    results=[]
+
+    # Discogs search first because it is stronger for physical releases.
+    try:
+        dres=lookup_discogs_text_search(artist,title,code)
+        if dres:
+            diagnostics.append({'Step':'Discogs search','Status':f'{len(dres)} match(es)','Details':'Discogs search returned release candidates.'})
+            for res in dres:
+                if code:
+                    try:
+                        cache_lookup_result(code,res)
+                        create_or_update_how_release(code,res)
+                    except Exception:
+                        pass
+            results.extend(dres)
+        else:
+            token_msg='with token' if discogs_token_status() else 'without token'
+            diagnostics.append({'Step':'Discogs search','Status':'No match','Details':f'Discogs search returned no result {token_msg}.'})
+    except Exception as e:
+        diagnostics.append({'Step':'Discogs search','Status':'Error','Details':safe(e)})
+
+    try:
+        mbres=lookup_musicbrainz_text_search(artist,title,code)
+        if mbres:
+            diagnostics.append({'Step':'MusicBrainz search','Status':f'{len(mbres)} match(es)','Details':'MusicBrainz search returned release candidates.'})
+            for res in mbres:
+                if code:
+                    try:
+                        cache_lookup_result(code,res)
+                        create_or_update_how_release(code,res)
+                    except Exception:
+                        pass
+            results.extend(mbres)
+        else:
+            diagnostics.append({'Step':'MusicBrainz search','Status':'No match','Details':'MusicBrainz search returned no result for these terms.'})
+    except Exception as e:
+        diagnostics.append({'Step':'MusicBrainz search','Status':'Error','Details':safe(e)})
+
+    # Deduplicate by source/external_id
+    seen=set()
+    unique=[]
+    for r in results:
+        key=(safe(r.get('source')),safe(r.get('external_id')),safe(r.get('title')))
+        if key not in seen:
+            unique.append(r); seen.add(key)
+
+    if unique:
+        diagnostics.append({'Step':'Final result','Status':f'{len(unique)} possible match(es)','Details':'Review the candidates and choose the closest release.'})
+    else:
+        diagnostics.append({'Step':'Final result','Status':'Manual entry needed','Details':'No source returned a match by barcode or text search.'})
+    return unique, diagnostics
+
+
 def lookup_barcode_with_diagnostics(barcode):
     code=normalize_barcode(barcode)
     diagnostics=[]
@@ -1368,6 +1555,12 @@ def render_barcode_lookup_widget(key_prefix='main'):
     c1,c2=st.columns([2,1])
     barcode=c1.text_input('Scan or enter barcode / UPC',key=f'v24_lookup_barcode_{key_prefix}',placeholder='Click here, then scan with USB/Bluetooth scanner or type manually')
     lookup_clicked=c2.button('Lookup barcode',key=f'v24_lookup_button_{key_prefix}')
+
+    with st.expander('No barcode match? Search by artist and title'):
+        a1,a2=st.columns(2)
+        search_artist=a1.text_input('Artist',key=f'v25_search_artist_{key_prefix}',placeholder='Example: Lady Gaga')
+        search_title=a2.text_input('Album / release title',key=f'v25_search_title_{key_prefix}',placeholder='Example: The Fame')
+        text_search_clicked=st.button('Search artist/title',key=f'v25_text_search_button_{key_prefix}')
     if lookup_clicked:
         code=normalize_barcode(barcode)
         if not code:
@@ -1382,6 +1575,17 @@ def render_barcode_lookup_widget(key_prefix='main'):
                 st.success(f'Found {len(matches)} possible match(es). Choose one below to auto-fill the listing draft.')
             else:
                 st.warning('No lookup match found yet. Review diagnostics below, then manually enter the product if needed.')
+
+    if text_search_clicked:
+        with st.spinner('Searching by artist/title...'):
+            matches,diagnostics=lookup_by_artist_title_with_diagnostics(search_artist,search_title,barcode)
+        st.session_state[f'v25_lookup_diagnostics_{key_prefix}']=diagnostics
+        if matches:
+            st.session_state[f'v24_barcode_matches_{key_prefix}']=matches
+            st.session_state[f'v24_lookup_barcode_clean_{key_prefix}']=normalize_barcode(barcode)
+            st.success(f'Found {len(matches)} possible match(es). Choose one below to auto-fill the listing draft.')
+        else:
+            st.warning('No artist/title match found. Review diagnostics below, then manually enter the product if needed.')
 
     show_barcode_diagnostics(st.session_state.get(f'v25_lookup_diagnostics_{key_prefix}',[]))
 
@@ -1864,8 +2068,16 @@ def barcode_diagnostics_page():
     st.header('Barcode Lookup Diagnostics')
     st.write('Use this page to test a barcode and see exactly which sources House Of Wax checks.')
     code=st.text_input('Barcode to test',key='standalone_diag_barcode')
-    if st.button('Run diagnostic lookup',key='standalone_diag_run'):
+    c1,c2=st.columns(2)
+    artist=c1.text_input('Artist fallback',key='standalone_diag_artist',placeholder='Example: Lady Gaga')
+    title=c2.text_input('Title fallback',key='standalone_diag_title',placeholder='Example: The Fame')
+    c3,c4=st.columns(2)
+    if c3.button('Run barcode diagnostic lookup',key='standalone_diag_run'):
         matches,diagnostics=lookup_barcode_with_diagnostics(code)
+        st.session_state['standalone_diag_matches']=matches
+        st.session_state['standalone_diag_results']=diagnostics
+    if c4.button('Run artist/title search',key='standalone_text_diag_run'):
+        matches,diagnostics=lookup_by_artist_title_with_diagnostics(artist,title,code)
         st.session_state['standalone_diag_matches']=matches
         st.session_state['standalone_diag_results']=diagnostics
     show_barcode_diagnostics(st.session_state.get('standalone_diag_results',[]))
