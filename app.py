@@ -10,7 +10,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25.7 SOURCE HEALTH + UNIVERSAL SEARCH'
+APP_VERSION='V25.8 SOURCE HEALTH KEY FIX'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -1435,19 +1435,19 @@ def show_universal_search_links(artist='', title='', barcode=''):
     for label,url in links:
         st.markdown(f"- [{label}]({url})")
 
-def render_source_health_panel():
+def render_source_health_panel(key_prefix='main'):
     with st.expander('Source health check / why search may return nothing'):
         st.write('This tests whether Streamlit can reach the outside music search sources.')
-        if st.button('Run source health check',key='source_health_check_button'):
-            st.session_state['source_health_results']=quick_source_health_check()
-        if st.session_state.get('source_health_results'):
-            st.dataframe(pd.DataFrame(st.session_state['source_health_results']),use_container_width=True)
+        if st.button('Run source health check',key=f'source_health_check_button_{key_prefix}'):
+            st.session_state[f'source_health_results_{key_prefix}']=quick_source_health_check()
+        if st.session_state.get(f'source_health_results_{key_prefix}'):
+            st.dataframe(pd.DataFrame(st.session_state[f'source_health_results_{key_prefix}']),use_container_width=True)
         st.caption('If Apple/iTunes and MusicBrainz show connection errors, the app cannot reach outside APIs from the deployed environment. In that case use the manual links and internal House Of Wax database workflow.')
 
-def manual_release_seed_form(artist='', title='', barcode=''):
+def manual_release_seed_form(artist='', title='', barcode='', key_prefix='main'):
     with st.expander('Manual release seed: add this item to House Of Wax database'):
         st.write('Use this when automatic search fails but you found the correct information manually.')
-        with st.form('manual_release_seed_form'):
+        with st.form(f'manual_release_seed_form_{key_prefix}'):
             code=st.text_input('Barcode',value=normalize_barcode(barcode))
             a=st.text_input('Artist',value=safe(artist))
             t=st.text_input('Title',value=safe(title))
@@ -1885,7 +1885,7 @@ def render_barcode_lookup_widget(key_prefix='main'):
     seed_listing_media_policy()
     st.markdown('### Barcode / UPC lookup')
     st.write('For records, CDs, and cassettes, scan or type the barcode. House Of Wax checks its own release database first, then outside sources for release information and cover art. For shirts, dolls, memorabilia, merch, and accessories, sellers should use a photo of the exact item or an official product image.')
-    render_source_health_panel()
+    render_source_health_panel(key_prefix)
     c1,c2=st.columns([2,1])
     barcode=c1.text_input('Scan or enter barcode / UPC',key=f'v24_lookup_barcode_{key_prefix}',placeholder='Click here, then scan with USB/Bluetooth scanner or type manually')
     lookup_clicked=c2.button('Lookup barcode',key=f'v24_lookup_button_{key_prefix}')
@@ -1925,7 +1925,7 @@ def render_barcode_lookup_widget(key_prefix='main'):
     current_artist=st.session_state.get(f'v25_search_artist_{key_prefix}','')
     current_title=st.session_state.get(f'v25_search_title_{key_prefix}','')
     show_universal_search_links(current_artist,current_title,barcode)
-    manual_release_seed_form(current_artist,current_title,barcode)
+    manual_release_seed_form(current_artist,current_title,barcode,key_prefix)
 
 
 
@@ -2422,7 +2422,7 @@ def barcode_diagnostics_page():
         st.session_state['standalone_diag_results']=diagnostics
     show_barcode_diagnostics(st.session_state.get('standalone_diag_results',[]))
     show_universal_search_links(st.session_state.get('standalone_diag_artist',''),st.session_state.get('standalone_diag_title',''),code)
-    manual_release_seed_form(st.session_state.get('standalone_diag_artist',''),st.session_state.get('standalone_diag_title',''),code)
+    manual_release_seed_form(st.session_state.get('standalone_diag_artist',''),st.session_state.get('standalone_diag_title',''),code,'standalone_diag')
 
 
     matches=st.session_state.get('standalone_diag_matches',[])

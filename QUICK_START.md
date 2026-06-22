@@ -1,4 +1,4 @@
-# Quick Start V25.7
+# Quick Start V25.8
 
 Upload:
 
@@ -10,16 +10,12 @@ Reboot Streamlit.
 
 Confirm:
 
-`Running V25.7 SOURCE HEALTH + UNIVERSAL SEARCH`
+`Running V25.8 SOURCE HEALTH KEY FIX`
 
 Test:
 1. My House of Wax
 2. Seller Tools
-3. Upload Product or Barcode Scanner
-4. Open source health check and run it
-5. Open broad search
-6. Artist: Lady Gaga
-7. Title: The Fame
-8. Click Search all music sources
-9. If still no result, use the universal manual links
-10. Seed the correct release manually into House Of Wax database
+3. Upload Product
+4. Barcode Scanner
+
+Both should open without duplicate key errors.

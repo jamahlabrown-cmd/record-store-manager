@@ -1,40 +1,27 @@
-# House Of Wax V25.7 Source Health + Universal Search
+# House Of Wax V25.8 Source Health Key Fix
 
 You should see:
 
-`Running V25.7 SOURCE HEALTH + UNIVERSAL SEARCH`
+`Running V25.8 SOURCE HEALTH KEY FIX`
 
-## What changed
+## Fixed
 
-This expands search as wide as practical inside the Streamlit prototype.
+This fixes the duplicate Streamlit key crash from the Source Health Check button.
 
-Automatic search:
-- House Of Wax internal database
-- Barcode cache
-- Discogs broad search
-- Apple/iTunes album search
-- MusicBrainz broad search
+The source health panel appears in both:
+- Upload Product
+- Barcode Scanner
 
-Diagnostic tools:
-- Source health check
-- API connection status
-- Discogs token status
+The button now uses a unique key for each section.
 
-Manual fallback links:
-- Discogs search
-- Discogs barcode search
-- MusicBrainz search
-- MusicBrainz barcode search
-- Apple Music/iTunes web search
-- Google web search
-- Wikipedia search
-- Wikidata search
-- Barcode Lookup
-- UPCitemdb
-- Go-UPC
-- GS1 Verified by GS1
+## Also protected
 
-Manual database building:
-- Manual release seed form
-- Adds manually found releases to House Of Wax database
-- Loads manual release into listing draft
+The manual release seed form now uses unique keys too, because it can also appear in multiple sections.
+
+## Keeps
+
+- V25.7 universal search links
+- source health check
+- manual release seeding
+- broad music search
+- Release Database
