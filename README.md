@@ -1,28 +1,33 @@
-# House Of Wax V21 Visual Identity + Brand Polish
+# House Of Wax V22 Content Engine Expansion
 
 You should see:
 
-`Running V21 VISUAL IDENTITY + BRAND POLISH`
+`Running V22 CONTENT ENGINE EXPANSION`
 
 ## What changed
 
-- Added House Of Wax custom CSS
-- Dark editorial visual theme
-- Cream / black / muted gold / oxblood palette
-- Stronger homepage hero
-- Better cards and section styling
-- Better metric cards
-- Better button styling
-- Better sidebar styling
-- Brand badges under header
-- Cleaner House Of Wax tone
+- Added Content Series table
+- Added Content Campaigns table
+- Added Content Repurposing table
+- Added Content Series admin tools
+- Added Campaign planning tools
+- Added article repurposing tools for:
+  - social captions
+  - short-form video scripts
+  - newsletter blurbs
+  - marketplace callouts
 
-## Purpose
+## Series included
 
-V21 focuses on the visual feel of the site while keeping V20's navigation structure:
+- Wax 101
+- Crate Talk
+- Behind the Record
+- The Culture File
+- Then & Now
+- Press Play
+- Format Focus
+- House Rules
 
-- Home
-- Marketplace
-- Knowledge Hub
-- Sell on House Of Wax
-- My House of Wax
+## Business documents
+
+The V22 ZIP also includes the earlier business planning documents at the root level.

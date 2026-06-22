@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V21 VISUAL IDENTITY + BRAND POLISH'
+APP_VERSION='V22 CONTENT ENGINE EXPANSION'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -85,6 +85,9 @@ def setup():
     cur.execute("""CREATE TABLE IF NOT EXISTS quick_tips(id INTEGER PRIMARY KEY AUTOINCREMENT,tip_text TEXT,category TEXT,status TEXT DEFAULT 'Active',created_at TEXT,updated_at TEXT)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS did_you_know(id INTEGER PRIMARY KEY AUTOINCREMENT,fact_text TEXT,category TEXT,status TEXT DEFAULT 'Active',created_at TEXT,updated_at TEXT)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS newsletter_signups(id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT,name TEXT,source TEXT,created_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS content_series(id INTEGER PRIMARY KEY AUTOINCREMENT,series_name TEXT,description TEXT,audience TEXT,tone TEXT,default_format TEXT,active TEXT DEFAULT 'Yes',created_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS content_campaigns(id INTEGER PRIMARY KEY AUTOINCREMENT,campaign_name TEXT,theme TEXT,goal TEXT,start_date TEXT,end_date TEXT,target_audience TEXT,status TEXT DEFAULT 'Planning',notes TEXT,created_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS content_repurposing(id INTEGER PRIMARY KEY AUTOINCREMENT,post_id INTEGER,series_name TEXT,short_caption TEXT,reel_script TEXT,newsletter_blurb TEXT,marketplace_callout TEXT,created_at TEXT)""")
     c.commit(); c.close()
     mig={'buyers':{'state':'TEXT','bio':'TEXT','status':'TEXT','rating':'REAL','completed_purchases':'INTEGER','unpaid_orders':'INTEGER'},'sellers':{'state':'TEXT','website':'TEXT','instagram':'TEXT','seller_story':'TEXT','specialties':'TEXT','logo_url':'TEXT','banner_url':'TEXT','status':'TEXT','seller_level':'TEXT','rating':'REAL','completed_sales':'INTEGER','auction_override':'TEXT','access_code':'TEXT'},'products':{'sku':'TEXT','barcode':'TEXT','catalog_number':'TEXT','matrix_runout':'TEXT','label':'TEXT','release_year':'TEXT','video_url':'TEXT','audio_url':'TEXT','external_release_url':'TEXT','listing_status':'TEXT','listing_type':'TEXT'},'feedback':{'public':'TEXT'}}
     for t,cols in mig.items():
@@ -547,7 +550,7 @@ def knowledge_hub():
     seed_knowledge()
     header()
     st.header('House Of Wax Knowledge Hub')
-    st.write('House Of Wax-owned education, culture, history, discovery, and marketplace learning. This is not seller promotion. This hub teaches buyers, collectors, and visitors how to understand records, music culture, formats, trust, grading, barcodes, catalog numbers, matrix/runouts, genres, eras, and safe buying.')
+    st.write('House Of Wax-owned education, culture, history, discovery, content series, and marketplace learning. This is not seller promotion. This hub teaches buyers, collectors, and visitors how to understand records, music culture, formats, trust, grading, barcodes, catalog numbers, matrix/runouts, genres, eras, and safe buying.')
     if 'selected_knowledge_id' in st.session_state:
         rows=df('SELECT * FROM knowledge_posts WHERE id=?',(int(st.session_state['selected_knowledge_id']),))
         if rows.empty:
@@ -608,12 +611,43 @@ def knowledge_hub():
             st.caption(f"Why it matters: {safe(t['why_it_matters'])}")
             if safe(t['example']): st.write(f"Example: {safe(t['example'])}")
 
+
+def seed_content_series():
+    series = [
+        ('Wax 101','Beginner-friendly education about records, formats, collecting basics, and marketplace language.','New collectors','Clear, simple, useful','Education article'),
+        ('Crate Talk','Short editorial posts about digging, discovery, collecting habits, and music culture.','Collectors and culture seekers','Conversational, stylish, curious','Editorial post'),
+        ('Behind the Record','Stories behind records, pressings, labels, eras, artwork, and music scenes.','Music fans and collectors','Story-driven, cultural, researched','Feature article'),
+        ('The Culture File','Broader music culture, regional scenes, flyers, fashion, streetwear, memorabilia, and community.','Culture seekers','Editorial, sharp, informed','Culture essay'),
+        ('Then & Now','How formats, artists, scenes, prices, or collector habits changed over time.','Collectors and casual readers','Comparative, accessible','Then-and-now feature'),
+        ('Press Play','Listening recommendations, genre intros, and discovery guides from House Of Wax.','Music discovery audience','Curated, enthusiastic, credible','Recommendation guide'),
+        ('Format Focus','Deep dives on vinyl, CD, cassette, 12-inch singles, promos, test pressings, and other formats.','Collectors','Educational, specific, practical','Format guide'),
+        ('House Rules','Trust, buyer/seller expectations, grading standards, feedback, and marketplace behavior.','Buyers and sellers','Direct, fair, trustworthy','Trust guide')
+    ]
+    for s in series:
+        exists=df("SELECT id FROM content_series WHERE lower(series_name)=lower(?)",(s[0],))
+        if exists.empty:
+            run("INSERT INTO content_series(series_name,description,audience,tone,default_format,active,created_at) VALUES(?,?,?,?,?,'Yes',?)",(*s,now()))
+
+def generate_repurposing_assets(title, summary, category, series_name):
+    title=safe(title)
+    summary=safe(summary)
+    category=safe(category,'House Of Wax')
+    series_name=safe(series_name,'Wax 101')
+    tag=category.replace(' ','').replace('&','')
+    short_caption=f"{title}\n\nHouse Of Wax note: {summary}\n\n#{tag} #HouseOfWax #MusicCulture #VinylCommunity"
+    reel_script=f"Hook: Here is something every House Of Wax collector should know about {title}.\n\nPoint 1: {summary}\n\nPoint 2: Slow down, verify details, and learn the language before you buy.\n\nClose: Follow House Of Wax for collecting knowledge, music culture, and marketplace trust."
+    newsletter=f"This week in {series_name}: {title}. {summary} Read it in the House Of Wax Knowledge Hub."
+    marketplace=f"Related marketplace reminder: use this knowledge when reviewing listings, condition notes, catalog details, and seller information."
+    return short_caption, reel_script, newsletter, marketplace
+
+
 def content_admin():
     seed_knowledge()
+    seed_content_series()
     header()
     st.header('House Of Wax Content Admin')
     st.write('Create House Of Wax educational content only. This is for teaching and brand authority, not seller promotion.')
-    tabs=st.tabs(['Article creator','Glossary builder','Social copy generator','Draft library','Content calendar','Reports'])
+    tabs=st.tabs(['Article creator','Glossary builder','Social copy generator','Draft library','Content calendar','Reports','Content Series','Campaigns'])
     with tabs[0]:
         with st.form('knowledge_article_form'):
             title=st.text_input('Article title')
