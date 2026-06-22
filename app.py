@@ -2,6 +2,7 @@
 # ROOT APP DEPLOY FIX — upload THIS app.py to the repository root, replacing the old root app.py.
 import sqlite3
 import re
+from urllib.parse import quote_plus
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
@@ -9,7 +10,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25.6 BROAD MUSIC SEARCH'
+APP_VERSION='V25.7 SOURCE HEALTH + UNIVERSAL SEARCH'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -1373,6 +1374,102 @@ def lookup_discogs_text_search(artist='', title='', barcode=''):
         return []
 
 
+
+def quick_source_health_check():
+    checks=[]
+    targets=[
+        ('Apple/iTunes','https://itunes.apple.com/search',{'term':'Lady Gaga The Fame','media':'music','entity':'album','limit':1}),
+        ('MusicBrainz','https://musicbrainz.org/ws/2/release/',{'query':'Lady Gaga The Fame','fmt':'json','limit':1}),
+        ('Discogs','https://api.discogs.com/database/search',{'q':'Lady Gaga The Fame','type':'release','per_page':1}),
+    ]
+    for name,url,params in targets:
+        try:
+            headers={'User-Agent':'HouseOfWaxPrototype/1.0'}
+            r=requests.get(url,params=params,headers=headers,timeout=8)
+            detail=f'HTTP {r.status_code}'
+            status='Reachable' if r.status_code in [200,401,403,429] else 'Problem'
+            if name=='Discogs' and r.status_code in [401,403]:
+                status='Needs token / limited'
+            if name=='MusicBrainz' and r.status_code==503:
+                status='Temporarily unavailable'
+            checks.append({'Source':name,'Status':status,'Details':detail})
+        except Exception as e:
+            checks.append({'Source':name,'Status':'Connection error','Details':safe(e)})
+    checks.append({'Source':'Discogs token','Status':'Connected' if discogs_token_status() else 'Not connected','Details':'Add DISCOGS_TOKEN in Streamlit secrets for stronger Discogs results.'})
+    return checks
+
+def universal_search_urls(artist='', title='', barcode=''):
+    artist=safe(artist)
+    title=safe(title)
+    code=normalize_barcode(barcode)
+    q=' '.join([artist,title]).strip() or code
+    q_enc=quote_plus(q)
+    code_enc=quote_plus(code)
+    links=[]
+    if q:
+        links.extend([
+            ('Discogs search',f'https://www.discogs.com/search/?q={q_enc}&type=all'),
+            ('MusicBrainz search',f'https://musicbrainz.org/search?query={q_enc}&type=release&method=indexed'),
+            ('Apple Music/iTunes web search',f'https://music.apple.com/us/search?term={q_enc}'),
+            ('Google shopping/web search',f'https://www.google.com/search?q={q_enc}+album+barcode+vinyl+CD'),
+            ('Wikipedia search',f'https://en.wikipedia.org/w/index.php?search={q_enc}'),
+            ('Wikidata search',f'https://www.wikidata.org/w/index.php?search={q_enc}'),
+        ])
+    if code:
+        links.extend([
+            ('Discogs barcode search',f'https://www.discogs.com/search/?q={code_enc}&type=all'),
+            ('MusicBrainz barcode search',f'https://musicbrainz.org/search?query=barcode%3A{code_enc}&type=release&method=indexed'),
+            ('Barcode Lookup search',f'https://www.barcodelookup.com/{code_enc}'),
+            ('UPCitemdb search',f'https://www.upcitemdb.com/upc/{code_enc}'),
+            ('Go-UPC search',f'https://go-upc.com/search?q={code_enc}'),
+            ('GS1 GEPIR / Verified by GS1 search',f'https://www.gs1.org/services/verified-by-gs1'),
+        ])
+    return links
+
+def show_universal_search_links(artist='', title='', barcode=''):
+    links=universal_search_urls(artist,title,barcode)
+    if not links:
+        return
+    st.markdown('### Universal manual search links')
+    st.caption('Use these when automatic APIs return no matches. They open source searches directly so you can verify and copy details.')
+    for label,url in links:
+        st.markdown(f"- [{label}]({url})")
+
+def render_source_health_panel():
+    with st.expander('Source health check / why search may return nothing'):
+        st.write('This tests whether Streamlit can reach the outside music search sources.')
+        if st.button('Run source health check',key='source_health_check_button'):
+            st.session_state['source_health_results']=quick_source_health_check()
+        if st.session_state.get('source_health_results'):
+            st.dataframe(pd.DataFrame(st.session_state['source_health_results']),use_container_width=True)
+        st.caption('If Apple/iTunes and MusicBrainz show connection errors, the app cannot reach outside APIs from the deployed environment. In that case use the manual links and internal House Of Wax database workflow.')
+
+def manual_release_seed_form(artist='', title='', barcode=''):
+    with st.expander('Manual release seed: add this item to House Of Wax database'):
+        st.write('Use this when automatic search fails but you found the correct information manually.')
+        with st.form('manual_release_seed_form'):
+            code=st.text_input('Barcode',value=normalize_barcode(barcode))
+            a=st.text_input('Artist',value=safe(artist))
+            t=st.text_input('Title',value=safe(title))
+            c1,c2,c3=st.columns(3)
+            fmt=c1.text_input('Format',value='Vinyl')
+            label=c2.text_input('Label')
+            year=c3.text_input('Release year')
+            genre=st.text_input('Genre/style')
+            catalog=st.text_input('Catalog number')
+            img=st.text_input('Cover/product image URL')
+            ext=st.text_input('Source/release URL')
+            notes=st.text_area('Notes / where you found the info')
+            submit=st.form_submit_button('Seed House Of Wax release database')
+        if submit:
+            result={'source':'House Of Wax Manual','external_id':'','artist':a,'title':t,'format':fmt,'label':label,'release_year':year,'country':'','genre':genre,'style':'','catalog_number':catalog,'image_url':img,'external_url':ext,'raw_summary':notes}
+            rid=create_or_update_how_release(code,result,notes)
+            st.session_state['v24_autofill_listing']=result
+            st.session_state['v24_autofill_barcode']=normalize_barcode(code)
+            st.session_state['v25_release_id']=rid
+            st.success('Manual release saved to House Of Wax database and loaded into listing draft.')
+
+
 def lookup_itunes_text_search(artist='', title='', barcode=''):
     artist=safe(artist)
     title=safe(title)
@@ -1398,13 +1495,8 @@ def lookup_itunes_text_search(artist='', title='', barcode=''):
             ext=safe(item.get('collectionViewUrl'))
             cid=safe(item.get('collectionId'))
             genre=safe(item.get('primaryGenreName'))
-            # filter lightly if artist/title were entered
+            # Do not filter aggressively here. The ranked display handles relevance.
             hay=f"{rel_artist} {album}".lower()
-            if artist and artist.lower().split()[0] not in hay:
-                # Do not filter too aggressively; just continue if very unrelated
-                continue
-            if title and not any(part.lower() in hay for part in title.split()[:3]):
-                continue
             results.append({
                 'source':'Apple/iTunes',
                 'external_id':cid,
@@ -1793,6 +1885,7 @@ def render_barcode_lookup_widget(key_prefix='main'):
     seed_listing_media_policy()
     st.markdown('### Barcode / UPC lookup')
     st.write('For records, CDs, and cassettes, scan or type the barcode. House Of Wax checks its own release database first, then outside sources for release information and cover art. For shirts, dolls, memorabilia, merch, and accessories, sellers should use a photo of the exact item or an official product image.')
+    render_source_health_panel()
     c1,c2=st.columns([2,1])
     barcode=c1.text_input('Scan or enter barcode / UPC',key=f'v24_lookup_barcode_{key_prefix}',placeholder='Click here, then scan with USB/Bluetooth scanner or type manually')
     lookup_clicked=c2.button('Lookup barcode',key=f'v24_lookup_button_{key_prefix}')
@@ -1829,6 +1922,12 @@ def render_barcode_lookup_widget(key_prefix='main'):
             st.warning('No artist/title match found. Review diagnostics below, then manually enter the product if needed.')
 
     show_barcode_diagnostics(st.session_state.get(f'v25_lookup_diagnostics_{key_prefix}',[]))
+    current_artist=st.session_state.get(f'v25_search_artist_{key_prefix}','')
+    current_title=st.session_state.get(f'v25_search_title_{key_prefix}','')
+    show_universal_search_links(current_artist,current_title,barcode)
+    manual_release_seed_form(current_artist,current_title,barcode)
+
+
 
     matches=st.session_state.get(f'v24_barcode_matches_{key_prefix}',[])
     if matches:
@@ -2322,6 +2421,10 @@ def barcode_diagnostics_page():
         st.session_state['standalone_diag_matches']=matches
         st.session_state['standalone_diag_results']=diagnostics
     show_barcode_diagnostics(st.session_state.get('standalone_diag_results',[]))
+    show_universal_search_links(st.session_state.get('standalone_diag_artist',''),st.session_state.get('standalone_diag_title',''),code)
+    manual_release_seed_form(st.session_state.get('standalone_diag_artist',''),st.session_state.get('standalone_diag_title',''),code)
+
+
     matches=st.session_state.get('standalone_diag_matches',[])
     if matches:
         st.markdown('### Matches')

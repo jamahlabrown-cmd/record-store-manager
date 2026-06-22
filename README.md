@@ -1,28 +1,40 @@
-# House Of Wax V25.5 Search Fallback Upgrade
+# House Of Wax V25.7 Source Health + Universal Search
 
 You should see:
 
-`Running V25.5 SEARCH FALLBACK UPGRADE`
+`Running V25.7 SOURCE HEALTH + UNIVERSAL SEARCH`
 
 ## What changed
 
-Barcode-only lookup can miss popular artists if the exact barcode is not in MusicBrainz or if Discogs is not connected.
+This expands search as wide as practical inside the Streamlit prototype.
 
-V25.5 adds:
-- artist/title fallback search
-- Discogs text search
-- MusicBrainz text search
-- standalone Barcode Diagnostics with artist/title search
-- better fallback when barcode lookup returns nothing
+Automatic search:
+- House Of Wax internal database
+- Barcode cache
+- Discogs broad search
+- Apple/iTunes album search
+- MusicBrainz broad search
 
-## Recommended test
+Diagnostic tools:
+- Source health check
+- API connection status
+- Discogs token status
 
-Try:
-- Artist: Lady Gaga
-- Title: The Fame
+Manual fallback links:
+- Discogs search
+- Discogs barcode search
+- MusicBrainz search
+- MusicBrainz barcode search
+- Apple Music/iTunes web search
+- Google web search
+- Wikipedia search
+- Wikidata search
+- Barcode Lookup
+- UPCitemdb
+- Go-UPC
+- GS1 Verified by GS1
 
-or:
-- Artist: Lady Gaga
-- Title: Born This Way
-
-Then choose a release candidate and auto-fill the listing draft.
+Manual database building:
+- Manual release seed form
+- Adds manually found releases to House Of Wax database
+- Loads manual release into listing draft
