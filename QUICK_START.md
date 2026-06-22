@@ -1,15 +1,17 @@
-# Quick Start V16.3
+# Quick Start V18
 
-1. Download the direct `app.py` file.
-2. In GitHub, open the repository root.
-3. Click the existing `app.py`.
-4. Click the pencil/edit button.
-5. Select all old code.
-6. Delete it.
-7. Paste the new `app.py` code.
-8. Commit changes.
-9. Reboot Streamlit.
+Upload:
+- app.py
+- requirements.txt
+- runtime.txt
 
-Confirm the top says:
+Reboot Streamlit.
 
-`Running V16.3 ROOT APP DEPLOY FIX`
+Confirm:
+`Running V18 HOME + EDITORIAL EXPERIENCE`
+
+Test:
+- Home page loads
+- Knowledge Hub still loads
+- Content Admin > Homepage Editor opens
+- Newsletter signup saves

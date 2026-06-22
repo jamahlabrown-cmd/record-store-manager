@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V16.3 ROOT APP DEPLOY FIX'
+APP_VERSION='V18 HOME + EDITORIAL EXPERIENCE'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -77,6 +77,14 @@ def setup():
     cur.execute('''CREATE TABLE IF NOT EXISTS bids(id INTEGER PRIMARY KEY AUTOINCREMENT,auction_id INTEGER,buyer_id INTEGER,bid_amount REAL,bid_time TEXT)''')
     cur.execute('''CREATE TABLE IF NOT EXISTS listing_flags(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,seller_id INTEGER,buyer_id INTEGER,reason TEXT,details TEXT,status TEXT DEFAULT 'Open',created_at TEXT)''')
     cur.execute('''CREATE TABLE IF NOT EXISTS culture_posts(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT,category TEXT,author TEXT,body TEXT,image_url TEXT,status TEXT DEFAULT 'Published',created_at TEXT)''')
+    cur.execute("""CREATE TABLE IF NOT EXISTS knowledge_posts(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT,category TEXT,audience TEXT,level TEXT,summary TEXT,body TEXT,house_tip TEXT,image_url TEXT,status TEXT DEFAULT 'Draft',featured TEXT DEFAULT 'No',created_at TEXT,updated_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS glossary_terms(id INTEGER PRIMARY KEY AUTOINCREMENT,term TEXT UNIQUE,category TEXT,plain_definition TEXT,why_it_matters TEXT,example TEXT,status TEXT DEFAULT 'Published',created_at TEXT,updated_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS content_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT,source_type TEXT,source_id INTEGER,title TEXT,platform TEXT,caption TEXT,script TEXT,hashtags TEXT,cta TEXT,status TEXT DEFAULT 'Draft',created_at TEXT,updated_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS content_calendar(id INTEGER PRIMARY KEY AUTOINCREMENT,content_type TEXT,topic TEXT,platform TEXT,planned_date TEXT,status TEXT DEFAULT 'Planned',notes TEXT,created_at TEXT,updated_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS homepage_blocks(id INTEGER PRIMARY KEY AUTOINCREMENT,block_name TEXT,title TEXT,subtitle TEXT,body TEXT,button_text TEXT,button_target TEXT,image_url TEXT,status TEXT DEFAULT 'Active',sort_order INTEGER DEFAULT 0,created_at TEXT,updated_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS quick_tips(id INTEGER PRIMARY KEY AUTOINCREMENT,tip_text TEXT,category TEXT,status TEXT DEFAULT 'Active',created_at TEXT,updated_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS did_you_know(id INTEGER PRIMARY KEY AUTOINCREMENT,fact_text TEXT,category TEXT,status TEXT DEFAULT 'Active',created_at TEXT,updated_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS newsletter_signups(id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT,name TEXT,source TEXT,created_at TEXT)""")
     c.commit(); c.close()
     mig={'buyers':{'state':'TEXT','bio':'TEXT','status':'TEXT','rating':'REAL','completed_purchases':'INTEGER','unpaid_orders':'INTEGER'},'sellers':{'state':'TEXT','website':'TEXT','instagram':'TEXT','seller_story':'TEXT','specialties':'TEXT','logo_url':'TEXT','banner_url':'TEXT','status':'TEXT','seller_level':'TEXT','rating':'REAL','completed_sales':'INTEGER','auction_override':'TEXT','access_code':'TEXT'},'products':{'sku':'TEXT','barcode':'TEXT','catalog_number':'TEXT','matrix_runout':'TEXT','label':'TEXT','release_year':'TEXT','video_url':'TEXT','audio_url':'TEXT','external_release_url':'TEXT','listing_status':'TEXT','listing_type':'TEXT'},'feedback':{'public':'TEXT'}}
     for t,cols in mig.items():
@@ -233,9 +241,371 @@ def product_detail(pid):
         if st.button('Submit report'): run("INSERT INTO listing_flags(product_id,seller_id,buyer_id,reason,details,status,created_at) VALUES(?,?,?,?,?,'Open',?)",(pid,int(p['seller_id']),bid,reason,details,now())); st.success('Report submitted.')
 
 # ---------- Pages ----------
+
+# ---------- House Of Wax Knowledge Hub ----------
+KNOWLEDGE_CATEGORIES=[
+    'Record Collecting 101',
+    'Vinyl Grading School',
+    'Barcode, Catalog & Matrix Guides',
+    'Spotting Bootlegs and Reissues',
+    'How to Buy Safely',
+    'Care, Storage & Cleaning',
+    'Genre Education',
+    'Music History & Culture',
+    'House Of Wax Trust Standards',
+    'Marketplace Education'
+]
+
+def seed_knowledge():
+    posts=table('knowledge_posts')
+    if posts.empty:
+        starters=[
+            ('What Does VG+ Mean When Buying Vinyl?','Vinyl Grading School','Beginners','Beginner','VG+ means Very Good Plus. It usually describes a record that has been played but still has strong sound quality.','VG+ does not mean perfect. It usually means the record may show light marks, minor sleeve scuffs, or small signs of handling, but it should play well without major issues like repeated skips. Buyers should read condition notes, review photos, and ask questions when a grade is not clear.','On House Of Wax, grading education helps buyers understand what they are paying for before they purchase.'),
+            ('What Is a Matrix / Runout?','Barcode, Catalog & Matrix Guides','Collectors','Beginner','A matrix or runout is information etched or stamped near the center label of a record.','The matrix/runout area can help collectors identify a pressing, plant, mastering engineer, or version. It is one of the most useful clues when comparing originals, reissues, promos, and different pressings.','House Of Wax encourages sellers and buyers to record matrix/runout information whenever possible.'),
+            ('How to Spot a Bootleg or Unofficial Pressing','Spotting Bootlegs and Reissues','Buyers','Intermediate','Bootlegs and unofficial pressings can look real at first glance, but details often reveal the truth.','Collectors should compare label design, barcode, catalog number, matrix/runout, print quality, release history, and seller notes. A suspiciously low price on a rare record can also be a warning sign.','House Of Wax believes transparency protects both buyers and honest sellers.'),
+            ('How to Store Vinyl Records the Right Way','Care, Storage & Cleaning','Beginners','Beginner','Good storage protects sound quality, jacket condition, and long-term value.','Store records vertically, avoid heat and sunlight, use inner and outer sleeves, and keep records away from moisture. Never stack records flat for long periods because weight can cause warping or ring wear.','Better storage means better collecting and fewer condition disputes.'),
+            ('Why Buyer and Seller Feedback Should Be Public','House Of Wax Trust Standards','Everyone','Beginner','Public feedback helps the community understand who they are doing business with.','Trust matters in a marketplace built around used, collectible, and condition-sensitive goods. Public feedback gives buyers and sellers more confidence before a transaction.','House Of Wax is built around education, transparency, and accountability.')
+        ]
+        for title,cat,aud,level,summary,body,tip in starters:
+            run("""INSERT INTO knowledge_posts(title,category,audience,level,summary,body,house_tip,status,featured,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (title,cat,aud,level,summary,body,tip,'Published','Yes' if 'VG+' in title else 'No',now(),now()))
+    terms=table('glossary_terms')
+    if terms.empty:
+        starter_terms=[
+            ('VG+','Vinyl grading','Very Good Plus. A common collector grade for a used record that should still play well.','Helps buyers understand condition and price.','A VG+ record may have light sleeve scuffs but should not have deep scratches.'),
+            ('Matrix / Runout','Record identification','Etched or stamped information near the center label of a vinyl record.','Can help identify the exact pressing.','A1/B1 or stamped plant codes can point to a specific version.'),
+            ('Catalog Number','Record identification','The label or release number assigned to a record, CD, cassette, or music item.','Helps verify the release and compare versions.','A catalog number printed on the spine may match the label listing.'),
+            ('Reissue','Pressing history','A later release of an album or single after the original issue.','Reissues can be valuable, but they are not the same as originals.','A 2020 reissue of a 1972 soul record is not the original 1972 pressing.'),
+            ('Promo Copy','Record collecting','A promotional copy distributed to radio stations, DJs, reviewers, or industry contacts.','Promos can be collectible but should be clearly described.','White label promo copies often have special labels or stamps.')
+        ]
+        for term,cat,definition,why,example in starter_terms:
+            run("""INSERT OR IGNORE INTO glossary_terms(term,category,plain_definition,why_it_matters,example,status,created_at,updated_at) VALUES(?,?,?,?,?,'Published',?,?)""",
+                (term,cat,definition,why,example,now(),now()))
+
+def make_social_pack(title,category,summary,body,tip):
+    core=safe(summary) or safe(body)[:180]
+    hashtag_base='#HouseOfWax #VinylCommunity #RecordCollecting #MusicCulture #CollectSmarter'
+    caption=f"{title}\n\n{core}\n\nHouse Of Wax is here to help people collect smarter, buy with confidence, and understand the culture behind the music.\n\n{hashtag_base}"
+    reel=f"Hook: Before you buy another record, learn this: {title}\n\nScene 1: Show the record/detail being discussed.\nScene 2: Explain the simple definition in one sentence.\nScene 3: Show why it matters for buyers and collectors.\nScene 4: End with: Collect smarter with House Of Wax."
+    fb=f"House Of Wax Knowledge Hub: {title}\n\n{core}\n\nWhy it matters: {safe(tip,'Education builds trust in the marketplace.')}\n\nLearn more inside House Of Wax."
+    newsletter=f"This week in the House Of Wax Knowledge Hub: {title}. {core} This is part of our mission to make record collecting, marketplace trust, and music culture easier to understand for everyone."
+    return {'Instagram/Facebook caption':caption,'Short-form video script':reel,'Facebook educational post':fb,'Newsletter blurb':newsletter,'Hashtags':hashtag_base,'CTA':'Learn more in the House Of Wax Knowledge Hub.'}
+
+def knowledge_card(row):
+    with st.container(border=True):
+        if safe(row.get('image_url')): st.image(safe(row.get('image_url')),use_container_width=True)
+        st.subheader(safe(row.get('title')))
+        st.caption(f"{safe(row.get('category'))} • {safe(row.get('level'))} • {safe(row.get('audience'))}")
+        st.write(safe(row.get('summary')))
+        if st.button('Read article',key=f"read_knowledge_{int(row['id'])}"):
+            st.session_state['selected_knowledge_id']=int(row['id']); st.rerun()
+
+def knowledge_hub():
+    seed_knowledge()
+    header()
+    st.header('House Of Wax Knowledge Hub')
+    st.write('Education owned by House Of Wax. This is not seller promotion. This hub teaches buyers, collectors, and visitors how to understand records, music culture, marketplace trust, grading, barcodes, catalog numbers, matrix/runouts, and safe buying.')
+    if 'selected_knowledge_id' in st.session_state:
+        rows=df('SELECT * FROM knowledge_posts WHERE id=?',(int(st.session_state['selected_knowledge_id']),))
+        if rows.empty:
+            st.session_state.pop('selected_knowledge_id',None); st.rerun()
+        post=rows.iloc[0]
+        if st.button('← Back to Knowledge Hub'):
+            st.session_state.pop('selected_knowledge_id',None); st.rerun()
+        st.title(safe(post['title']))
+        st.caption(f"{safe(post['category'])} • {safe(post['level'])} • For {safe(post['audience'])}")
+        if safe(post['image_url']): st.image(safe(post['image_url']),use_container_width=True)
+        st.markdown('### Quick answer')
+        st.write(safe(post['summary']))
+        st.markdown('### Full guide')
+        st.write(safe(post['body']))
+        st.markdown('### House Of Wax tip')
+        st.info(safe(post['house_tip'],'Collect smarter with House Of Wax.'))
+        with st.expander('House Of Wax social media copy for this education post'):
+            pack=make_social_pack(post['title'],post['category'],post['summary'],post['body'],post['house_tip'])
+            for k,v in pack.items():
+                st.markdown(f'**{k}**')
+                st.text_area(k,v,height=140,key=f"social_pack_{k}_{int(post['id'])}")
+        return
+    featured=df("SELECT * FROM knowledge_posts WHERE status='Published' AND featured='Yes' ORDER BY updated_at DESC")
+    if not featured.empty:
+        st.subheader('Featured education')
+        knowledge_card(featured.iloc[0])
+    st.subheader('Search the education library')
+    q=st.text_input('Search topics like VG+, barcode, runout, bootleg, storage, trust')
+    cats=['All']+KNOWLEDGE_CATEGORIES
+    cat=st.selectbox('Category',cats)
+    posts=df("SELECT * FROM knowledge_posts WHERE status='Published' ORDER BY updated_at DESC")
+    if q:
+        term=q.lower()
+        posts=posts[
+            posts['title'].fillna('').str.lower().str.contains(term) |
+            posts['summary'].fillna('').str.lower().str.contains(term) |
+            posts['body'].fillna('').str.lower().str.contains(term) |
+            posts['category'].fillna('').str.lower().str.contains(term)
+        ]
+    if cat!='All': posts=posts[posts['category']==cat]
+    cols=st.columns(2)
+    for i,(_,row) in enumerate(posts.iterrows()):
+        with cols[i%2]: knowledge_card(row)
+    st.divider()
+    st.subheader('Collector glossary')
+    terms=df("SELECT * FROM glossary_terms WHERE status='Published' ORDER BY term")
+    tq=st.text_input('Search glossary')
+    if tq:
+        term=tq.lower()
+        terms=terms[
+            terms['term'].fillna('').str.lower().str.contains(term) |
+            terms['plain_definition'].fillna('').str.lower().str.contains(term) |
+            terms['category'].fillna('').str.lower().str.contains(term)
+        ]
+    for _,t in terms.iterrows():
+        with st.expander(f"{safe(t['term'])} — {safe(t['category'])}"):
+            st.write(safe(t['plain_definition']))
+            st.caption(f"Why it matters: {safe(t['why_it_matters'])}")
+            if safe(t['example']): st.write(f"Example: {safe(t['example'])}")
+
+def content_admin():
+    seed_knowledge()
+    header()
+    st.header('House Of Wax Content Admin')
+    st.write('Create House Of Wax educational content only. This is for teaching and brand authority, not seller promotion.')
+    tabs=st.tabs(['Article creator','Glossary builder','Social copy generator','Draft library','Content calendar','Reports'])
+    with tabs[0]:
+        with st.form('knowledge_article_form'):
+            title=st.text_input('Article title')
+            category=st.selectbox('Category',KNOWLEDGE_CATEGORIES)
+            audience=st.selectbox('Audience',['Beginners','Collectors','Buyers','Sellers','Everyone'])
+            level=st.selectbox('Level',['Beginner','Intermediate','Advanced'])
+            summary=st.text_area('Short plain-English summary')
+            body=st.text_area('Full educational article')
+            tip=st.text_area('House Of Wax tip')
+            img_file=st.file_uploader('Optional image',type=['png','jpg','jpeg','webp'])
+            img_url=st.text_input('Or image URL')
+            status=st.selectbox('Status',['Draft','Published'])
+            featured=st.selectbox('Featured',['No','Yes'])
+            submitted=st.form_submit_button('Save education article')
+        if submitted:
+            img=save(img_file,'knowledge_images') or img_url
+            run("""INSERT INTO knowledge_posts(title,category,audience,level,summary,body,house_tip,image_url,status,featured,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (title,category,audience,level,summary,body,tip,img,status,featured,now(),now()))
+            st.success('Knowledge article saved.')
+        st.dataframe(table('knowledge_posts'),use_container_width=True)
+    with tabs[1]:
+        with st.form('glossary_form'):
+            term=st.text_input('Term')
+            category=st.text_input('Category',value='Record collecting')
+            definition=st.text_area('Plain-English definition')
+            why=st.text_area('Why it matters')
+            example=st.text_area('Example')
+            status=st.selectbox('Status',['Published','Draft'])
+            submitted=st.form_submit_button('Save glossary term')
+        if submitted:
+            run("""INSERT OR REPLACE INTO glossary_terms(term,category,plain_definition,why_it_matters,example,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)""",
+                (term,category,definition,why,example,status,now(),now()))
+            st.success('Glossary term saved.')
+        st.dataframe(table('glossary_terms'),use_container_width=True)
+    with tabs[2]:
+        posts=table('knowledge_posts')
+        if posts.empty: st.info('Create an article first.')
+        else:
+            pid=st.selectbox('Choose education article',posts['id'].tolist())
+            post=posts[posts['id']==pid].iloc[0]
+            pack=make_social_pack(post['title'],post['category'],post['summary'],post['body'],post['house_tip'])
+            platform=st.selectbox('Save draft for platform',['Instagram','TikTok/Reels','Facebook','YouTube Shorts','Email/Newsletter','In-App'])
+            for k,v in pack.items():
+                st.markdown(f'**{k}**')
+                st.text_area(k,v,height=140,key=f"admin_pack_{k}")
+            if st.button('Save social draft for House Of Wax'):
+                run("""INSERT INTO content_drafts(source_type,source_id,title,platform,caption,script,hashtags,cta,status,created_at,updated_at) VALUES('Knowledge Article',?,?,?,?,?,?,?,'Draft',?,?)""",
+                    (int(pid),safe(post['title']),platform,pack['Instagram/Facebook caption'],pack['Short-form video script'],pack['Hashtags'],pack['CTA'],now(),now()))
+                st.success('Draft saved.')
+    with tabs[3]:
+        drafts=table('content_drafts')
+        st.dataframe(drafts,use_container_width=True)
+        if not drafts.empty:
+            did=st.selectbox('Draft ID',drafts['id'].tolist())
+            status=st.selectbox('Draft status',['Draft','Ready','Posted','Archived'])
+            if st.button('Update draft status'):
+                run('UPDATE content_drafts SET status=?,updated_at=? WHERE id=?',(status,now(),int(did))); st.success('Draft updated.')
+    with tabs[4]:
+        with st.form('calendar_form'):
+            ctype=st.selectbox('Content type',['Article','Short-form video','Instagram post','Facebook post','Email','In-app feature'])
+            topic=st.text_input('Topic')
+            platform=st.selectbox('Platform',['House Of Wax App','Instagram','TikTok','YouTube Shorts','Facebook','Email'])
+            pdate=st.text_input('Planned date')
+            status=st.selectbox('Status',['Planned','Drafting','Ready','Posted'])
+            notes=st.text_area('Notes')
+            submitted=st.form_submit_button('Add to calendar')
+        if submitted:
+            run("""INSERT INTO content_calendar(content_type,topic,platform,planned_date,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)""",
+                (ctype,topic,platform,pdate,status,notes,now(),now()))
+            st.success('Calendar item saved.')
+        st.dataframe(table('content_calendar'),use_container_width=True)
+    with tabs[5]:
+        rep=st.selectbox('Content report',['knowledge_posts','glossary_terms','content_drafts','content_calendar','homepage_blocks','quick_tips','did_you_know','newsletter_signups'])
+        data=table(rep)
+        st.dataframe(data,use_container_width=True)
+        st.download_button('Download CSV',data.to_csv(index=False),file_name=f'{rep}.csv')
+
+
+# ---------- V18 Home + Editorial Experience ----------
+def seed_homepage_editorial():
+    seed_knowledge()
+    if table('homepage_blocks').empty:
+        blocks=[
+            ('hero','House Of Wax','Music. Culture. Collecting. Community.','Discover the stories, sounds, formats, and knowledge behind the music you collect. House Of Wax is where marketplace trust meets music culture education.','Visit Knowledge Hub','Knowledge Hub','Active',1),
+            ('featured_story','What Does VG+ Really Mean?','Featured Story','VG+ does not mean perfect. It means the record has been played but should still sound strong, with only light signs of use. Before you buy used vinyl, learn what grades actually mean.','Read the Guide','Knowledge Hub','Active',2),
+            ('weekly_focus','This Week at House Of Wax','Matrix / Runout','The small letters and numbers etched near the center of a record can tell a big story. Matrix and runout information can help identify pressings, mastering details, and release versions.','Learn About Runouts','Knowledge Hub','Active',3),
+            ('genre_spotlight','Southern Soul Essentials','Genre / Era Spotlight','Southern soul is more than a sound. It carries church roots, regional storytelling, blues influence, deep vocals, and a sense of place.','Explore Spotlight','Knowledge Hub','Active',4),
+            ('editorial_pick','Format Focus: Why Cassettes Still Matter','House Of Wax Editorial Pick','Cassettes are portable, imperfect, personal, and deeply tied to mixtape culture. Their return is not just nostalgia — it is about physical connection.','Read More','Knowledge Hub','Active',5),
+            ('newsletter','Join House Of Wax','Join the Culture','Get collector tips, music culture stories, grading guides, and marketplace education from House Of Wax.','Join the List','Newsletter','Active',6)
+        ]
+        for b in blocks:
+            run("INSERT INTO homepage_blocks(block_name,title,subtitle,body,button_text,button_target,status,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(*b,now(),now()))
+    if table('quick_tips').empty:
+        for tip,cat in [
+            ('A barcode can help identify a reissue, but it does not tell the whole story.','Barcode, Catalog & Matrix Guides'),
+            ('A clean sleeve does not always mean the record is clean. Check both media and sleeve grades.','Vinyl Grading School'),
+            ('Original pressings are not always the best sounding version. Research matters.','Record Collecting 101'),
+            ('A promo copy can be collectible, but condition and demand still matter.','Record Collecting 101'),
+            ('If a rare record is priced too low, slow down and verify the details.','How to Buy Safely')]:
+            run("INSERT INTO quick_tips(tip_text,category,status,created_at,updated_at) VALUES(?,?,'Active',?,?)",(tip,cat,now(),now()))
+    if table('did_you_know').empty:
+        for fact,cat in [
+            ('The matrix/runout area of a record can sometimes help identify the pressing plant, mastering engineer, or version.','Barcode, Catalog & Matrix Guides'),
+            ('VG+ is one of the most common collector grades, but it still allows minor signs of use.','Vinyl Grading School'),
+            ('Some reissues are highly respected by collectors, especially when they are well mastered and clearly documented.','Spotting Bootlegs and Reissues'),
+            ('Music memorabilia can carry cultural value even when it is not rare.','Music History & Culture')]:
+            run("INSERT INTO did_you_know(fact_text,category,status,created_at,updated_at) VALUES(?,?,'Active',?,?)",(fact,cat,now(),now()))
+
+def home_block(name):
+    r=df("SELECT * FROM homepage_blocks WHERE block_name=? AND status='Active' ORDER BY sort_order,id LIMIT 1",(name,))
+    return {} if r.empty else r.iloc[0].to_dict()
+
+def mini_card(title,subtitle,body):
+    with st.container(border=True):
+        st.caption(safe(subtitle))
+        st.subheader(safe(title))
+        st.write(safe(body))
+
 def home():
-    header(); c1,c2,c3,c4=st.columns(4); c1.metric('Buyers',len(table('buyers'))); c2.metric('Sellers',len(table('sellers'))); c3.metric('Products',len(table('products'))); c4.metric('Orders',len(table('orders')))
-    st.markdown('## Full rebuild for testing\nThis version is built cleanly around seller stores, barcode inventory, public trust, and active buyer/seller flows.')
+    seed_homepage_editorial()
+    header()
+    hero=home_block('hero')
+    st.markdown('---')
+    left,right=st.columns([1.35,1])
+    with left:
+        st.caption('HOUSE OF WAX')
+        st.markdown(f"# {safe(hero.get('title'),'House Of Wax')}")
+        st.markdown(f"### {safe(hero.get('subtitle'),'Music. Culture. Collecting. Community.')}")
+        st.write(safe(hero.get('body'),'Discover records, learn the culture, and collect smarter.'))
+        a,b,c=st.columns(3)
+        if a.button('Explore Marketplace'): st.info('Use the sidebar to open Marketplace.')
+        if b.button('Visit Knowledge Hub'): st.info('Use the sidebar to open Knowledge Hub.')
+        if c.button("Read This Week's Feature"): st.info('Use the sidebar to open Knowledge Hub.')
+    with right:
+        st.markdown('### 🎧 A marketplace with a built-in culture magazine')
+        st.write('House Of Wax teaches people how to collect, buy, sell, and understand music culture the right way.')
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric('Knowledge Articles',len(table('knowledge_posts')))
+    c2.metric('Glossary Terms',len(table('glossary_terms')))
+    c3.metric('Marketplace Items',len(table('products')))
+    c4.metric('Community Posts',len(table('culture_posts')))
+    st.markdown('---')
+    l,r=st.columns(2)
+    with l:
+        x=home_block('featured_story'); mini_card(x.get('title','What Does VG+ Really Mean?'),x.get('subtitle','Featured Story'),x.get('body','Learn grading before you buy.'))
+    with r:
+        x=home_block('weekly_focus'); mini_card(x.get('title','This Week at House Of Wax'),x.get('subtitle','Matrix / Runout'),x.get('body','Runout markings can reveal pressing details.'))
+    st.markdown('---')
+    st.markdown('## Learn the Culture')
+    st.caption('Start with the basics or go deeper into pressings, grading, formats, trust, and music history.')
+    tiles=[
+        ('Record Collecting 101','Learn the basic language of collecting.'),
+        ('Vinyl Grading School','Understand Mint, Near Mint, VG+, VG, and Good.'),
+        ('Barcode, Catalog & Matrix Guides','Learn how identifiers help verify releases.'),
+        ('Bootlegs & Reissues','Learn originals, reissues, unofficial pressings, and bootlegs.'),
+        ('Care, Storage & Cleaning','Protect records, sleeves, tapes, CDs, posters, and memorabilia.'),
+        ('Music History & Culture','Explore scenes, regions, genres, and movements.'),
+        ('Genre Education','Learn the roots and sounds behind different genres.'),
+        ('House Of Wax Trust Standards','Understand transparency and public feedback.')
+    ]
+    cols=st.columns(4)
+    for i,(t,bdy) in enumerate(tiles):
+        with cols[i%4]: mini_card(t,'Knowledge path',bdy)
+    st.markdown('---')
+    q,d=st.columns(2)
+    with q:
+        st.markdown('## Collector Quick Tips')
+        tips=df("SELECT * FROM quick_tips WHERE status='Active' ORDER BY id LIMIT 5")
+        for _,tip in tips.iterrows(): st.write(f"• {safe(tip['tip_text'])}")
+    with d:
+        st.markdown('## Did You Know?')
+        facts=df("SELECT * FROM did_you_know WHERE status='Active' ORDER BY id LIMIT 4")
+        for _,fact in facts.iterrows(): mini_card('Did you know?',safe(fact['category']),safe(fact['fact_text']))
+    st.markdown('---')
+    s,p=st.columns(2)
+    with s:
+        x=home_block('genre_spotlight'); mini_card(x.get('title','Southern Soul Essentials'),x.get('subtitle','Genre / Era Spotlight'),x.get('body','Explore the sound, labels, artists, and culture.'))
+    with p:
+        x=home_block('editorial_pick'); mini_card(x.get('title','Format Focus: Why Cassettes Still Matter'),x.get('subtitle','House Of Wax Editorial Pick'),x.get('body','Cassettes connect music to memory and mixtape culture.'))
+    st.markdown('---')
+    st.markdown('## Latest From the Knowledge Hub')
+    posts=df("SELECT * FROM knowledge_posts WHERE status='Published' ORDER BY updated_at DESC LIMIT 6")
+    cols=st.columns(3)
+    for i,(_,post) in enumerate(posts.iterrows()):
+        with cols[i%3]: knowledge_card(post)
+    st.markdown('---')
+    news=home_block('newsletter')
+    st.markdown(f"## {safe(news.get('title'),'Join House Of Wax')}")
+    st.write(safe(news.get('body'),'Get collector tips, music culture stories, grading guides, and marketplace education from House Of Wax.'))
+    n1,n2,n3=st.columns([1,1,1])
+    name=n1.text_input('Name',key='newsletter_name')
+    email=n2.text_input('Email',key='newsletter_email')
+    if n3.button('Join the List'):
+        if not safe(email): st.warning('Enter an email first.')
+        else:
+            run("INSERT INTO newsletter_signups(email,name,source,created_at) VALUES(?,?,?,?)",(email,name,'Homepage',now()))
+            st.success('You are on the House Of Wax list.')
+
+def homepage_editor():
+    seed_homepage_editorial()
+    st.subheader('Homepage Editor')
+    tabs=st.tabs(['Homepage Blocks','Quick Tips','Did You Know','Newsletter Signups'])
+    with tabs[0]:
+        st.dataframe(table('homepage_blocks'),use_container_width=True)
+        with st.form('home_block_form'):
+            bn=st.selectbox('Block',['hero','featured_story','weekly_focus','genre_spotlight','editorial_pick','newsletter'])
+            title=st.text_input('Title'); sub=st.text_input('Subtitle'); body=st.text_area('Body')
+            btn=st.text_input('Button text'); target=st.text_input('Button target')
+            status=st.selectbox('Status',['Active','Draft','Hidden'])
+            order=st.number_input('Sort order',min_value=0,value=1)
+            if st.form_submit_button('Save homepage block'):
+                run("INSERT INTO homepage_blocks(block_name,title,subtitle,body,button_text,button_target,status,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(bn,title,sub,body,btn,target,status,int(order),now(),now()))
+                st.success('Homepage block saved.')
+    with tabs[1]:
+        st.dataframe(table('quick_tips'),use_container_width=True)
+        with st.form('tip_form'):
+            tip=st.text_area('Quick tip'); cat=st.text_input('Category')
+            status=st.selectbox('Status',['Active','Draft','Hidden'],key='tip_status')
+            if st.form_submit_button('Save quick tip'):
+                run("INSERT INTO quick_tips(tip_text,category,status,created_at,updated_at) VALUES(?,?,?,?,?)",(tip,cat,status,now(),now()))
+                st.success('Quick tip saved.')
+    with tabs[2]:
+        st.dataframe(table('did_you_know'),use_container_width=True)
+        with st.form('fact_form'):
+            fact=st.text_area('Fact'); cat=st.text_input('Category',key='fact_cat')
+            status=st.selectbox('Status',['Active','Draft','Hidden'],key='fact_status')
+            if st.form_submit_button('Save fact'):
+                run("INSERT INTO did_you_know(fact_text,category,status,created_at,updated_at) VALUES(?,?,?,?,?)",(fact,cat,status,now(),now()))
+                st.success('Fact saved.')
+    with tabs[3]:
+        data=table('newsletter_signups')
+        st.dataframe(data,use_container_width=True)
+        if not data.empty:
+            st.download_button('Download newsletter signups',data.to_csv(index=False),file_name='newsletter_signups.csv')
+
 def test_setup():
     header(); st.header('Test setup')
     if st.button('Create/repair demo buyer, seller, and product'): st.success(f'Demo ready: buyer/seller/product IDs {seed_all()}')
@@ -412,15 +782,17 @@ def admin():
             s=get_seller(sid); run("INSERT INTO culture_posts(title,category,author,body,image_url,status,created_at) VALUES(?,'Seller Spotlight','House Of Wax',?,?,'Published',?)",(f"Seller Spotlight: {safe(s['store_name'])}",safe(s['seller_story'],safe(s['store_bio'])),safe(s['banner_url']) or safe(s['logo_url']),now())); st.success('Spotlight created.')
         st.subheader('Messages'); st.dataframe(table('messages'),use_container_width=True); st.subheader('Feedback'); st.dataframe(table('feedback'),use_container_width=True)
     with tabs[4]:
-        rep=st.selectbox('Report',['buyers','sellers','products','product_gallery','orders','feedback','messages','seller_followers','seller_badges','store_announcements','seller_events','auctions','bids','listing_flags','culture_posts']); data=table(rep); st.dataframe(data,use_container_width=True); st.download_button('Download CSV',data.to_csv(index=False),file_name=f'{rep}.csv')
+        rep=st.selectbox('Report',['buyers','sellers','products','product_gallery','orders','feedback','messages','seller_followers','seller_badges','store_announcements','seller_events','auctions','bids','listing_flags','culture_posts','knowledge_posts','glossary_terms','content_drafts','content_calendar']); data=table(rep); st.dataframe(data,use_container_width=True); st.download_button('Download CSV',data.to_csv(index=False),file_name=f'{rep}.csv')
     with tabs[5]:
-        t=st.selectbox('Table',['buyers','sellers','products','product_gallery','orders','feedback','messages','seller_followers','seller_badges','store_announcements','seller_events','auctions','bids','listing_flags','culture_posts']); data=table(t); st.dataframe(data,use_container_width=True)
+        t=st.selectbox('Table',['buyers','sellers','products','product_gallery','orders','feedback','messages','seller_followers','seller_badges','store_announcements','seller_events','auctions','bids','listing_flags','culture_posts','knowledge_posts','glossary_terms','content_drafts','content_calendar']); data=table(t); st.dataframe(data,use_container_width=True)
         if not data.empty:
             rid=st.selectbox('Row ID',data['id'].tolist()); confirm=st.checkbox('Confirm delete')
             if st.button('Delete row') and confirm: run(f'DELETE FROM {t} WHERE id=?',(int(rid),)); st.success('Deleted.')
 
-menu=st.sidebar.radio('House Of Wax',['Home','Test Setup','Marketplace','Auctions','Seller Stores','Music + Culture','Register / Sell','Buyer Dashboard','Seller Dashboard','Admin'])
+menu=st.sidebar.radio('House Of Wax',['Home','Knowledge Hub','Content Admin','Test Setup','Marketplace','Auctions','Seller Stores','Music + Culture','Register / Sell','Buyer Dashboard','Seller Dashboard','Admin'])
 if menu=='Home': home()
+elif menu=='Knowledge Hub': knowledge_hub()
+elif menu=='Content Admin': content_admin()
 elif menu=='Test Setup': test_setup()
 elif menu=='Marketplace': marketplace()
 elif menu=='Auctions': auctions()
