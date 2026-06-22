@@ -8,9 +8,10 @@ from datetime import datetime
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25.8 SOURCE HEALTH KEY FIX'
+APP_VERSION='V25.10 ONE-BUTTON UNIVERSAL SEARCH'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -1430,10 +1431,80 @@ def show_universal_search_links(artist='', title='', barcode=''):
     links=universal_search_urls(artist,title,barcode)
     if not links:
         return
-    st.markdown('### Universal manual search links')
-    st.caption('Use these when automatic APIs return no matches. They open source searches directly so you can verify and copy details.')
-    for label,url in links:
-        st.markdown(f"- [{label}]({url})")
+    st.markdown('### One-button universal search')
+    st.caption('One click opens all source searches at once using the artist, album title, and/or barcode you entered.')
+
+    # Browser security may block multiple tabs the first time. If that happens, allow pop-ups for the Streamlit app.
+    links_js=",\n".join([f'{{label: {safe(label)!r}, url: {safe(url)!r}}}' for label,url in links])
+    components.html(f"""
+    <style>
+      .how-one-search-wrap {{
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        padding: 0.3rem 0 0.8rem 0;
+      }}
+      .how-one-search-button {{
+        width: 100%;
+        border: 1px solid rgba(226, 211, 170, 0.78);
+        background: linear-gradient(135deg, rgba(226,211,170,0.28), rgba(96,45,38,0.25));
+        color: #fff4d6;
+        border-radius: 999px;
+        padding: 0.95rem 1rem;
+        font-size: 1rem;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        cursor: pointer;
+      }}
+      .how-one-search-button:hover {{
+        background: linear-gradient(135deg, rgba(226,211,170,0.42), rgba(96,45,38,0.35));
+      }}
+      .how-one-search-note {{
+        margin-top: 0.55rem;
+        color: rgba(255,255,255,0.72);
+        font-size: 0.86rem;
+        line-height: 1.35;
+      }}
+      .how-opened-list {{
+        margin-top: 0.65rem;
+        color: rgba(255,255,255,0.82);
+        font-size: 0.86rem;
+      }}
+      .how-opened-list a {{
+        color: #f8efd4;
+      }}
+    </style>
+    <div class="how-one-search-wrap">
+      <button class="how-one-search-button" onclick="openAllHouseOfWaxSearches()">🔎 Search All Sources At Once</button>
+      <div class="how-one-search-note">
+        This opens Discogs, MusicBrainz, Apple/iTunes, Google, Wikipedia/Wikidata, barcode databases, and GS1 searches in new tabs.
+        If only one tab opens, allow pop-ups for this app and click again.
+      </div>
+      <div id="how-opened-list" class="how-opened-list"></div>
+    </div>
+    <script>
+      const howLinks = [{links_js}];
+      function openAllHouseOfWaxSearches() {{
+        let opened = 0;
+        let html = "<strong>Opened searches:</strong><br>";
+        howLinks.forEach((item, index) => {{
+          setTimeout(() => {{
+            const win = window.open(item.url, "_blank", "noopener,noreferrer");
+            if (win) opened += 1;
+          }}, index * 120);
+          html += "• <a href='" + item.url + "' target='_blank' rel='noopener noreferrer'>" + item.label + "</a><br>";
+        }});
+        document.getElementById("how-opened-list").innerHTML = html + "<br><em>If your browser blocked tabs, use the links above or allow pop-ups.</em>";
+      }}
+    </script>
+    """,height=180)
+
+    with st.expander('Backup: individual source links and copyable URLs'):
+        st.write('Use this if your browser blocks the one-button search.')
+        for label,url in links:
+            st.markdown(f"- [{safe(label)}]({safe(url)})")
+        st.markdown('#### Copy exact URLs')
+        for label,url in links:
+            st.text_input(label,value=url,key=f"copy_link_{abs(hash(label+url))}")
+
 
 def render_source_health_panel(key_prefix='main'):
     with st.expander('Source health check / why search may return nothing'):

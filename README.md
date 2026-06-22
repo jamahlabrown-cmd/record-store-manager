@@ -1,27 +1,33 @@
-# House Of Wax V25.8 Source Health Key Fix
+# House Of Wax V25.10 One-Button Universal Search
 
 You should see:
 
-`Running V25.8 SOURCE HEALTH KEY FIX`
+`Running V25.10 ONE-BUTTON UNIVERSAL SEARCH`
 
-## Fixed
+## What changed
 
-This fixes the duplicate Streamlit key crash from the Source Health Check button.
+The Universal manual search section is now one main button:
 
-The source health panel appears in both:
-- Upload Product
-- Barcode Scanner
+`Search All Sources At Once`
 
-The button now uses a unique key for each section.
+One click attempts to open all source searches in new browser tabs:
+- Discogs
+- MusicBrainz
+- Apple/iTunes
+- Google
+- Wikipedia
+- Wikidata
+- Discogs barcode search
+- MusicBrainz barcode search
+- Barcode Lookup
+- UPCitemdb
+- Go-UPC
+- GS1
 
-## Also protected
+## Important browser note
 
-The manual release seed form now uses unique keys too, because it can also appear in multiple sections.
+Browsers may block multiple tabs/pop-ups on the first click. If only one tab opens, allow pop-ups for the Streamlit app and click again.
 
-## Keeps
+## Backup
 
-- V25.7 universal search links
-- source health check
-- manual release seeding
-- broad music search
-- Release Database
+The individual links are still available in an expander as a backup.
