@@ -1,4 +1,4 @@
-# Quick Start V19.1
+# Quick Start V20
 
 Upload:
 
@@ -10,9 +10,16 @@ Reboot Streamlit.
 
 Confirm:
 
-`Running V19.1 DUPLICATE BUTTON KEY FIX`
+`Running V20 MY HOUSE OF WAX`
 
 Test:
-- Knowledge Hub
-- Read article buttons
-- Home page latest Knowledge Hub cards
+
+1. Home
+2. Marketplace
+3. Knowledge Hub
+4. Sell on House Of Wax
+5. My House of Wax
+6. My House of Wax > Buyer Account
+7. My House of Wax > Seller Tools
+8. My House of Wax > Content Admin
+9. My House of Wax > Admin

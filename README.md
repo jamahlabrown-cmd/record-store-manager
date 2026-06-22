@@ -1,13 +1,31 @@
-# House Of Wax V19.1 Duplicate Button Key Fix
+# House Of Wax V20 My House of Wax
 
 You should see:
 
-`Running V19.1 DUPLICATE BUTTON KEY FIX`
+`Running V20 MY HOUSE OF WAX`
 
-## Fixed
+## What changed
 
-This fixes the Streamlit error:
+The main navigation is now cleaner and more public-facing:
 
-`StreamlitDuplicateElementKey`
+- Home
+- Marketplace
+- Knowledge Hub
+- Sell on House Of Wax
+- My House of Wax
 
-The same Knowledge Hub article could appear in more than one section. Each `Read article` button now has a unique key based on the section where it appears.
+## What moved into My House of Wax
+
+- Buyer Account
+- Seller Tools
+- Content Admin
+- Admin
+- Test Setup
+- Auctions
+- Seller Stores
+
+## Why
+
+Buyer Dashboard and Seller Dashboard are still necessary, but they should not dominate the public navigation.
+
+`My House of Wax` is the branded account area for users, sellers, admins, and testing tools.

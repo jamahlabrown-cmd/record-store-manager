@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V19.1 DUPLICATE BUTTON KEY FIX'
+APP_VERSION='V20 MY HOUSE OF WAX'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -633,18 +633,18 @@ def test_setup():
     st.subheader('Buyers'); st.dataframe(table('buyers'),use_container_width=True); st.subheader('Sellers'); st.dataframe(table('sellers'),use_container_width=True); st.subheader('Products'); st.dataframe(table('products'),use_container_width=True)
 def register():
     header(); st.header('Sell on House Of Wax / Create Accounts')
-    st.info('House Of Wax is the platform. Independent sellers list their own inventory. House Of Wax can also sell through its official seller account for branded merch, official drops, and curated goods.'); btab,stab=st.tabs(['Buyer','Seller store'])
+    st.info('House Of Wax is the platform. Independent sellers list their own inventory. House Of Wax can also sell through its official seller account for branded merch, official drops, curated goods, and platform items. Seller tools now live under My House of Wax.'); btab,stab=st.tabs(['Buyer','Seller store'])
     with btab:
         with st.form('buyerform'):
             name=st.text_input('Buyer name'); email=st.text_input('Buyer email'); phone=st.text_input('Phone'); city=st.text_input('City'); state=st.text_input('State'); bio=st.text_area('Buyer bio'); sub=st.form_submit_button('Create buyer')
         if sub:
-            if email_exists('buyers',email): st.warning('Buyer already exists. Open Buyer Dashboard.')
+            if email_exists('buyers',email): st.warning('Buyer already exists. Open My House of Wax.')
             else: run('''INSERT INTO buyers(name,email,phone,city,state,bio,status,rating,completed_purchases,unpaid_orders,disputes,strikes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',(name,email,phone,city,state,bio,'Trusted Buyer',100,0,0,0,0,now())); st.success('Buyer created.')
     with stab:
         with st.form('sellerform'):
             store=st.text_input('Store name'); owner=st.text_input('Owner'); email=st.text_input('Seller email'); code=st.text_input('Access code',type='password'); bio=st.text_area('Store bio'); story=st.text_area('Seller story'); spec=st.text_area('Specialties'); logo=st.file_uploader('Logo',type=['png','jpg','jpeg','webp']); banner=st.file_uploader('Banner',type=['png','jpg','jpeg','webp']); sub=st.form_submit_button('Create active seller store')
         if sub:
-            if email_exists('sellers',email): st.warning('Seller already exists. Open Seller Dashboard.')
+            if email_exists('sellers',email): st.warning('Seller already exists. Open Seller Tools.')
             else: run('''INSERT INTO sellers(store_name,owner_name,email,phone,city,state,website,instagram,store_bio,seller_story,specialties,logo_url,banner_url,status,seller_level,rating,completed_sales,disputes,strikes,auction_override,access_code,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(store,owner,email,'','','','','',bio,story,spec,save_file(logo,'seller_logos'),save_file(banner,'seller_banners'),'Approved','Verified Seller',100,0,0,0,'Yes',code,now())); st.success('Seller store active.')
 def marketplace():
     header(); st.header('Marketplace')
@@ -652,7 +652,7 @@ def marketplace():
     if 'seller_id' in st.session_state: seller_profile(int(st.session_state['seller_id'])); return
     if 'product_id' in st.session_state: product_detail(int(st.session_state['product_id'])); return
     prods=df("SELECT * FROM products WHERE listing_status IN ('Active','Draft') ORDER BY created_at DESC")
-    if prods.empty: st.info('No inventory yet. Use Test Setup or Seller Dashboard.'); return
+    if prods.empty: st.info('No inventory yet. Use Test Setup or Seller Tools.'); return
     q=st.text_input('Search title, artist, barcode, catalog, category')
     if q:
         term=q.lower(); prods=prods[prods['artist'].fillna('').str.lower().str.contains(term)|prods['title'].fillna('').str.lower().str.contains(term)|prods['barcode'].fillna('').str.lower().str.contains(term)|prods['catalog_number'].fillna('').str.lower().str.contains(term)|prods['category'].fillna('').str.lower().str.contains(term)]
@@ -814,15 +814,43 @@ def admin():
             rid=st.selectbox('Row ID',data['id'].tolist()); confirm=st.checkbox('Confirm delete')
             if st.button('Delete row') and confirm: run(f'DELETE FROM {t} WHERE id=?',(int(rid),)); st.success('Deleted.')
 
-menu=st.sidebar.radio('House Of Wax',['Home','Marketplace','Knowledge Hub','Sell on House Of Wax','Buyer Dashboard','Seller Dashboard','Content Admin','Admin','Test Setup','Auctions','Seller Stores'])
+
+def my_house_of_wax():
+    header()
+    st.header('My House of Wax')
+    st.write('Your account area for buying, selling, messages, feedback, admin tools, and testing tools.')
+    st.info('For a cleaner public site, dashboards live here instead of being spread across the main navigation.')
+
+    section=st.radio('Choose your workspace',[
+        'Buyer Account',
+        'Seller Tools',
+        'Content Admin',
+        'Admin',
+        'Test Setup',
+        'Auctions',
+        'Seller Stores'
+    ])
+
+    if section=='Buyer Account':
+        buyer_dashboard()
+    elif section=='Seller Tools':
+        seller_dashboard()
+    elif section=='Content Admin':
+        content_admin()
+    elif section=='Admin':
+        admin()
+    elif section=='Test Setup':
+        test_setup()
+    elif section=='Auctions':
+        auctions()
+    elif section=='Seller Stores':
+        seller_stores()
+
+
+st.sidebar.caption('Public: Home, Marketplace, Knowledge Hub, Sell on House Of Wax. Accounts/tools: My House of Wax.')
+menu=st.sidebar.radio('House Of Wax',['Home','Marketplace','Knowledge Hub','Sell on House Of Wax','My House of Wax'])
 if menu=='Home': home()
-elif menu=='Knowledge Hub': knowledge_hub()
-elif menu=='Content Admin': content_admin()
-elif menu=='Test Setup': test_setup()
 elif menu=='Marketplace': marketplace()
-elif menu=='Auctions': auctions()
-elif menu=='Seller Stores': seller_stores()
+elif menu=='Knowledge Hub': knowledge_hub()
 elif menu=='Sell on House Of Wax': register()
-elif menu=='Buyer Dashboard': buyer_dashboard()
-elif menu=='Seller Dashboard': seller_dashboard()
-elif menu=='Admin': admin()
+elif menu=='My House of Wax': my_house_of_wax()
