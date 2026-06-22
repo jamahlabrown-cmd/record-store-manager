@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25.3 MISSING IMPORT FIX'
+APP_VERSION='V25.4 BARCODE LOOKUP DIAGNOSTICS'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -1226,6 +1226,111 @@ def lookup_discogs_barcode(barcode):
     except Exception:
         return []
 
+
+def discogs_token_status():
+    try:
+        token=st.secrets.get('DISCOGS_TOKEN','')
+        return bool(token)
+    except Exception:
+        return False
+
+def barcode_length_status(barcode):
+    code=normalize_barcode(barcode)
+    if not code:
+        return 'No barcode entered'
+    if not code.isdigit():
+        return 'Contains letters or nonstandard characters after cleanup'
+    if len(code) in [8,12,13,14]:
+        return f'Valid barcode length ({len(code)} digits)'
+    return f'Unusual barcode length ({len(code)} digits)'
+
+def lookup_barcode_with_diagnostics(barcode):
+    code=normalize_barcode(barcode)
+    diagnostics=[]
+    diagnostics.append({'Step':'Barcode entered','Status':safe(barcode),'Details':f'Cleaned value: {code}'})
+    diagnostics.append({'Step':'Barcode format','Status':barcode_length_status(code),'Details':'Common product barcode lengths are 8, 12, 13, or 14 digits.'})
+
+    if not code:
+        diagnostics.append({'Step':'Result','Status':'Stopped','Details':'No barcode was entered.'})
+        return [], diagnostics
+
+    # 1. House Of Wax internal release database
+    try:
+        internal=get_best_how_release(code)
+        if internal:
+            diagnostics.append({'Step':'House Of Wax release database','Status':'Match found','Details':'Using internal House Of Wax release record first.'})
+            return [how_release_to_autofill(internal)], diagnostics
+        diagnostics.append({'Step':'House Of Wax release database','Status':'No match','Details':'No internal House Of Wax release record exists for this barcode yet.'})
+    except Exception as e:
+        diagnostics.append({'Step':'House Of Wax release database','Status':'Error','Details':safe(e)})
+
+    # 2. Local barcode cache
+    try:
+        cached=df("SELECT * FROM barcode_lookup_cache WHERE barcode=? ORDER BY id DESC LIMIT 10",(code,))
+        if not cached.empty:
+            results=[]
+            for _,r in cached.iterrows():
+                res={k:r.get(k,'') for k in ['source','external_id','artist','title','format','label','release_year','country','genre','style','catalog_number','image_url','external_url','raw_summary']}
+                results.append(res)
+                try:
+                    create_or_update_how_release(code,res)
+                except Exception:
+                    pass
+            diagnostics.append({'Step':'Barcode lookup cache','Status':f'{len(results)} cached match(es)','Details':'Using prior lookup results saved by House Of Wax.'})
+            return results, diagnostics
+        diagnostics.append({'Step':'Barcode lookup cache','Status':'No match','Details':'This barcode has not been cached from a prior lookup.'})
+    except Exception as e:
+        diagnostics.append({'Step':'Barcode lookup cache','Status':'Error','Details':safe(e)})
+
+    # 3. Discogs
+    if discogs_token_status():
+        try:
+            discogs_results=lookup_discogs_barcode(code)
+            if discogs_results:
+                for res in discogs_results:
+                    try:
+                        cache_lookup_result(code,res)
+                        create_or_update_how_release(code,res)
+                    except Exception:
+                        pass
+                diagnostics.append({'Step':'Discogs','Status':f'{len(discogs_results)} match(es)','Details':'Discogs token is connected and returned results.'})
+                return discogs_results, diagnostics
+            diagnostics.append({'Step':'Discogs','Status':'No match','Details':'Discogs token is connected, but no results were returned for this barcode.'})
+        except Exception as e:
+            diagnostics.append({'Step':'Discogs','Status':'Error','Details':safe(e)})
+    else:
+        diagnostics.append({'Step':'Discogs','Status':'Not connected','Details':'No DISCOGS_TOKEN found in Streamlit secrets. Add one to enable Discogs lookup.'})
+
+    # 4. MusicBrainz
+    try:
+        mb_results=lookup_musicbrainz_barcode(code)
+        if mb_results:
+            for res in mb_results:
+                try:
+                    cache_lookup_result(code,res)
+                    create_or_update_how_release(code,res)
+                except Exception:
+                    pass
+            diagnostics.append({'Step':'MusicBrainz','Status':f'{len(mb_results)} match(es)','Details':'MusicBrainz returned results for this barcode.'})
+            return mb_results, diagnostics
+        diagnostics.append({'Step':'MusicBrainz','Status':'No match','Details':'MusicBrainz responded, but did not return a release for this barcode.'})
+    except Exception as e:
+        diagnostics.append({'Step':'MusicBrainz','Status':'Error','Details':safe(e)})
+
+    diagnostics.append({'Step':'Final result','Status':'Manual entry needed','Details':'No source returned a match. Seller can still enter the item manually and House Of Wax can build the database over time.'})
+    return [], diagnostics
+
+def show_barcode_diagnostics(diagnostics):
+    if diagnostics:
+        st.markdown('### Lookup diagnostics')
+        st.dataframe(pd.DataFrame(diagnostics),use_container_width=True)
+        final=diagnostics[-1]
+        if final.get('Status')=='Manual entry needed':
+            st.warning('No match found. This does not always mean the barcode is bad. It may mean Discogs is not connected yet, MusicBrainz does not have the release, or the item is non-music/merch.')
+        if any(d.get('Step')=='Discogs' and d.get('Status')=='Not connected' for d in diagnostics):
+            st.info('Discogs is not connected. Add a DISCOGS_TOKEN in Streamlit secrets for stronger vinyl/CD/cassette lookup.')
+
+
 def lookup_barcode(barcode):
     barcode=normalize_barcode(barcode)
     if not barcode:
@@ -1269,13 +1374,16 @@ def render_barcode_lookup_widget(key_prefix='main'):
             st.error('Enter or scan a barcode first.')
         else:
             with st.spinner('Looking up barcode...'):
-                matches=lookup_barcode(code)
+                matches,diagnostics=lookup_barcode_with_diagnostics(code)
+            st.session_state[f'v25_lookup_diagnostics_{key_prefix}']=diagnostics
             if matches:
                 st.session_state[f'v24_barcode_matches_{key_prefix}']=matches
                 st.session_state[f'v24_lookup_barcode_clean_{key_prefix}']=code
                 st.success(f'Found {len(matches)} possible match(es). Choose one below to auto-fill the listing draft.')
             else:
-                st.warning('No lookup match found yet. You can still enter the product manually. For Discogs lookup, add a DISCOGS_TOKEN in Streamlit secrets.')
+                st.warning('No lookup match found yet. Review diagnostics below, then manually enter the product if needed.')
+
+    show_barcode_diagnostics(st.session_state.get(f'v25_lookup_diagnostics_{key_prefix}',[]))
 
     matches=st.session_state.get(f'v24_barcode_matches_{key_prefix}',[])
     if matches:
@@ -1750,6 +1858,29 @@ def launch_checklist():
     st.info('This checklist is saved only in the current Streamlit session. Production launch tracking should later be stored in the database.')
 
 
+
+def barcode_diagnostics_page():
+    header()
+    st.header('Barcode Lookup Diagnostics')
+    st.write('Use this page to test a barcode and see exactly which sources House Of Wax checks.')
+    code=st.text_input('Barcode to test',key='standalone_diag_barcode')
+    if st.button('Run diagnostic lookup',key='standalone_diag_run'):
+        matches,diagnostics=lookup_barcode_with_diagnostics(code)
+        st.session_state['standalone_diag_matches']=matches
+        st.session_state['standalone_diag_results']=diagnostics
+    show_barcode_diagnostics(st.session_state.get('standalone_diag_results',[]))
+    matches=st.session_state.get('standalone_diag_matches',[])
+    if matches:
+        st.markdown('### Matches')
+        for i,m in enumerate(matches,1):
+            with st.container(border=True):
+                st.write(f"**{i}. {safe(m.get('artist'))} - {safe(m.get('title'))}**")
+                st.caption(f"{safe(m.get('source'))} • {safe(m.get('format'))} • {safe(m.get('release_year'))}")
+                if safe(m.get('image_url')):
+                    st.image(safe(m.get('image_url')),width=160)
+                st.write(safe(m.get('external_url')))
+
+
 def my_house_of_wax():
     header()
     st.header('My House of Wax')
@@ -1758,7 +1889,7 @@ def my_house_of_wax():
 
     workspace_options=['Buyer Account','Seller Tools']
     if testing_mode:
-        workspace_options += ['Content Admin','Admin','Test Setup','Auctions','Seller Stores','Release Database','Launch Checklist']
+        workspace_options += ['Content Admin','Admin','Test Setup','Auctions','Seller Stores','Release Database','Barcode Diagnostics','Launch Checklist']
     else:
         workspace_options += ['Content Admin']
     section=st.radio('Choose your workspace',workspace_options)
@@ -1779,6 +1910,8 @@ def my_house_of_wax():
         seller_stores()
     elif section=='Release Database':
         release_database_admin()
+    elif section=='Barcode Diagnostics':
+        barcode_diagnostics_page()
     elif section=='Launch Checklist':
         launch_checklist()
 

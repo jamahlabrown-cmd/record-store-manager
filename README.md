@@ -1,22 +1,27 @@
-# House Of Wax V25.3 Missing Import Fix
+# House Of Wax V25.4 Barcode Lookup Diagnostics
 
 You should see:
 
-`Running V25.3 MISSING IMPORT FIX`
+`Running V25.4 BARCODE LOOKUP DIAGNOSTICS`
 
-## Fixed
+## What changed
 
-This fixes the NameError crash:
+Instead of only saying "No lookup match found," the app now shows a diagnostic table explaining:
 
-`NameError: name 're' is not defined`
+- barcode entered
+- cleaned barcode value
+- barcode length status
+- House Of Wax release database result
+- lookup cache result
+- Discogs connection status
+- Discogs result or no result
+- MusicBrainz result or no result
+- final recommendation
 
-The barcode cleanup function uses `re.sub()`, so the app needed `import re`.
+## New Testing Mode tool
 
-## Keeps
+Turn on Testing mode, then go to:
 
-- V25 Release Database
-- V25.2 barcode widget unique key fixes
-- MusicBrainz lookup
-- Discogs token support
-- House Of Wax release database admin
-- Seller release correction system
+My House of Wax → Barcode Diagnostics
+
+Use this page to test barcodes without creating a listing.
