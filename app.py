@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V20 MY HOUSE OF WAX'
+APP_VERSION='V21 VISUAL IDENTITY + BRAND POLISH'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -93,6 +93,227 @@ def setup():
         if setting(k, None) is None: set_setting(k,v)
 setup()
 
+
+# ---------- V21 Visual Identity ----------
+def apply_brand_style():
+    st.markdown("""
+    <style>
+    :root {
+        --how-black: #0b0b0b;
+        --how-charcoal: #171717;
+        --how-ink: #222222;
+        --how-cream: #f6efe3;
+        --how-bone: #fbf7ef;
+        --how-gold: #c9a45c;
+        --how-oxblood: #6f1d1b;
+        --how-muted: #9b8f80;
+        --how-card: #151515;
+        --how-line: rgba(201,164,92,.35);
+    }
+
+    .stApp {
+        background:
+            radial-gradient(circle at top left, rgba(201,164,92,.14), transparent 28%),
+            radial-gradient(circle at top right, rgba(111,29,27,.18), transparent 24%),
+            linear-gradient(180deg, #0b0b0b 0%, #151515 45%, #0b0b0b 100%);
+        color: var(--how-cream);
+    }
+
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #090909 0%, #171717 100%);
+        border-right: 1px solid rgba(201,164,92,.25);
+    }
+
+    section[data-testid="stSidebar"] * {
+        color: var(--how-cream) !important;
+    }
+
+    h1, h2, h3 {
+        letter-spacing: -0.03em;
+        color: var(--how-cream) !important;
+    }
+
+    p, li, label, span {
+        color: rgba(246,239,227,.92);
+    }
+
+    .block-container {
+        padding-top: 1.8rem;
+        max-width: 1180px;
+    }
+
+    div[data-testid="stMetric"] {
+        background: rgba(251,247,239,.06);
+        border: 1px solid rgba(201,164,92,.24);
+        border-radius: 18px;
+        padding: 14px 16px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.18);
+    }
+
+    div[data-testid="stMetric"] label {
+        color: rgba(246,239,227,.72) !important;
+    }
+
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+        color: var(--how-gold) !important;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: rgba(251,247,239,.055);
+        border: 1px solid rgba(201,164,92,.22);
+        border-radius: 20px;
+        box-shadow: 0 18px 44px rgba(0,0,0,.18);
+    }
+
+    .stButton > button {
+        border-radius: 999px;
+        border: 1px solid rgba(201,164,92,.65);
+        background: linear-gradient(135deg, rgba(201,164,92,.96), rgba(151,111,45,.96));
+        color: #0b0b0b !important;
+        font-weight: 800;
+        letter-spacing: .01em;
+        padding: .55rem 1rem;
+        box-shadow: 0 10px 30px rgba(0,0,0,.22);
+    }
+
+    .stButton > button:hover {
+        border: 1px solid rgba(246,239,227,.9);
+        transform: translateY(-1px);
+        filter: brightness(1.05);
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: .35rem;
+        border-bottom: 1px solid rgba(201,164,92,.25);
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 999px 999px 0 0;
+        color: rgba(246,239,227,.72);
+    }
+
+    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] > div {
+        background: rgba(251,247,239,.08) !important;
+        border-color: rgba(201,164,92,.22) !important;
+        color: var(--how-cream) !important;
+        border-radius: 12px !important;
+    }
+
+    .how-hero {
+        border: 1px solid rgba(201,164,92,.35);
+        border-radius: 28px;
+        padding: 34px;
+        background:
+            linear-gradient(135deg, rgba(11,11,11,.92), rgba(34,20,16,.86)),
+            radial-gradient(circle at bottom right, rgba(201,164,92,.2), transparent 34%);
+        box-shadow: 0 24px 70px rgba(0,0,0,.35);
+        margin-bottom: 22px;
+    }
+
+    .how-kicker {
+        color: var(--how-gold);
+        font-size: .78rem;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+        font-weight: 900;
+        margin-bottom: .5rem;
+    }
+
+    .how-title {
+        color: var(--how-cream);
+        font-size: clamp(2.5rem, 6vw, 5.2rem);
+        line-height: .9;
+        letter-spacing: -.06em;
+        font-weight: 950;
+        margin-bottom: .6rem;
+    }
+
+    .how-subtitle {
+        color: var(--how-gold);
+        font-size: clamp(1.15rem, 2.2vw, 1.8rem);
+        font-weight: 700;
+        margin-bottom: .8rem;
+    }
+
+    .how-body {
+        color: rgba(246,239,227,.86);
+        font-size: 1.05rem;
+        line-height: 1.65;
+        max-width: 760px;
+    }
+
+    .how-section {
+        border-top: 1px solid rgba(201,164,92,.28);
+        padding-top: 22px;
+        margin-top: 26px;
+        margin-bottom: 14px;
+    }
+
+    .how-section .how-kicker {
+        margin-bottom: 0;
+    }
+
+    .how-section-title {
+        color: var(--how-cream);
+        font-size: 2rem;
+        font-weight: 900;
+        letter-spacing: -.04em;
+        margin-bottom: .2rem;
+    }
+
+    .how-section-copy {
+        color: rgba(246,239,227,.72);
+        max-width: 760px;
+        line-height: 1.6;
+    }
+
+    .how-badge {
+        display: inline-block;
+        background: rgba(201,164,92,.14);
+        color: var(--how-gold);
+        border: 1px solid rgba(201,164,92,.35);
+        border-radius: 999px;
+        padding: .25rem .7rem;
+        font-size: .8rem;
+        font-weight: 800;
+        margin: .15rem .15rem .15rem 0;
+    }
+
+    .how-callout {
+        border-left: 4px solid var(--how-gold);
+        background: rgba(251,247,239,.06);
+        padding: 18px 20px;
+        border-radius: 16px;
+        color: rgba(246,239,227,.9);
+        margin: 14px 0;
+    }
+
+    .how-footer-note {
+        color: rgba(246,239,227,.58);
+        font-size: .88rem;
+        margin-top: 8px;
+    }
+
+    hr {
+        border-color: rgba(201,164,92,.2) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+def section_header(title, subtitle='', kicker='House Of Wax'):
+    st.markdown(f"""
+    <div class="how-section">
+        <div class="how-kicker">{kicker}</div>
+        <div class="how-section-title">{title}</div>
+        <div class="how-section-copy">{subtitle}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def brand_badges(labels):
+    html=''.join([f'<span class="how-badge">{safe(label)}</span>' for label in labels])
+    st.markdown(html, unsafe_allow_html=True)
+
+
 # ---------- Data helpers ----------
 def get_buyer(i):
     r=df('SELECT * FROM buyers WHERE id=?',(int(i),)); return None if r.empty else r.iloc[0]
@@ -158,8 +379,10 @@ def fee(total,auction=False): return round(float(total)*float(setting('auction_c
 
 # ---------- UI helpers ----------
 def header():
+    apply_brand_style()
     st.title('🎧 House Of Wax')
     st.caption(setting('site_tagline'))
+    brand_badges(['Marketplace', 'Knowledge Hub', 'Culture Education', 'Collect Smarter'])
     st.caption(f'Running {APP_VERSION}')
     st.warning('TESTING BUILD: seller stores, product upload, barcode inventory, buyer/seller profiles, public feedback, messaging, auctions, and admin are active.')
     st.info(setting('announcement'))
@@ -514,19 +737,19 @@ def home():
     header()
     hero=home_block('hero')
     st.markdown('---')
-    left,right=st.columns([1.35,1])
-    with left:
-        st.caption('HOUSE OF WAX')
-        st.markdown(f"# {safe(hero.get('title'),'House Of Wax')}")
-        st.markdown(f"### {safe(hero.get('subtitle'),'Music. Culture. Collecting. Community.')}")
-        st.write(safe(hero.get('body'),'Discover records, learn the culture, and collect smarter.'))
-        a,b,c=st.columns(3)
-        if a.button('Explore Marketplace'): st.info('Use the sidebar to open Marketplace.')
-        if b.button('Visit Knowledge Hub'): st.info('Use the sidebar to open Knowledge Hub.')
-        if c.button("Read This Week's Feature"): st.info('Use the sidebar to open Knowledge Hub.')
-    with right:
-        st.markdown('### 🎧 A marketplace with a built-in culture magazine')
-        st.write('House Of Wax teaches people how to collect, buy, sell, and understand music culture the right way.')
+    st.markdown(f'''
+    <div class="how-hero">
+        <div class="how-kicker">House Of Wax</div>
+        <div class="how-title">{safe(hero.get('title'),'House Of Wax')}</div>
+        <div class="how-subtitle">{safe(hero.get('subtitle'),'Music. Culture. Collecting. Community.')}</div>
+        <div class="how-body">{safe(hero.get('body'),'Discover records, learn the culture, and collect smarter.')}</div>
+        <div class="how-callout">A marketplace with a built-in culture magazine — built to help people collect smarter and understand the story behind the music.</div>
+    </div>
+    ''', unsafe_allow_html=True)
+    a,b,c=st.columns(3)
+    if a.button('Explore Marketplace'): st.info('Use the sidebar to open Marketplace.')
+    if b.button('Visit Knowledge Hub'): st.info('Use the sidebar to open Knowledge Hub.')
+    if c.button("Read This Week's Feature"): st.info('Use the sidebar to open Knowledge Hub.')
     c1,c2,c3,c4=st.columns(4)
     c1.metric('Knowledge Articles',len(table('knowledge_posts')))
     c2.metric('Glossary Terms',len(table('glossary_terms')))
@@ -539,8 +762,7 @@ def home():
     with r:
         x=home_block('weekly_focus'); mini_card(x.get('title','This Week at House Of Wax'),x.get('subtitle','Matrix / Runout'),x.get('body','Runout markings can reveal pressing details.'))
     st.markdown('---')
-    st.markdown('## Learn the Culture')
-    st.caption('Start with the basics or go deeper into pressings, grading, formats, trust, and music history.')
+    section_header('Learn the Culture','Start with the basics or go deeper into pressings, grading, formats, trust, and music history.','Education + Discovery')
     tiles=[
         ('Record Collecting 101','Learn the basic language of collecting.'),
         ('Vinyl Grading School','Understand Mint, Near Mint, VG+, VG, and Good.'),
@@ -557,11 +779,11 @@ def home():
     st.markdown('---')
     q,d=st.columns(2)
     with q:
-        st.markdown('## Collector Quick Tips')
+        section_header('Collector Quick Tips','Useful knowledge in seconds.','Collect Smarter')
         tips=df("SELECT * FROM quick_tips WHERE status='Active' ORDER BY id LIMIT 5")
         for _,tip in tips.iterrows(): st.write(f"• {safe(tip['tip_text'])}")
     with d:
-        st.markdown('## Did You Know?')
+        section_header('Did You Know?','Fast facts from House Of Wax.','Quick Culture')
         facts=df("SELECT * FROM did_you_know WHERE status='Active' ORDER BY id LIMIT 4")
         for _,fact in facts.iterrows(): mini_card('Did you know?',safe(fact['category']),safe(fact['fact_text']))
     st.markdown('---')
@@ -571,7 +793,7 @@ def home():
     with p:
         x=home_block('editorial_pick'); mini_card(x.get('title','Format Focus: Why Cassettes Still Matter'),x.get('subtitle','House Of Wax Editorial Pick'),x.get('body','Cassettes connect music to memory and mixtape culture.'))
     st.markdown('---')
-    st.markdown('## Latest From the Knowledge Hub')
+    section_header('Latest From the Knowledge Hub','House Of Wax education, culture, and collecting guides.','Read + Learn')
     posts=df("SELECT * FROM knowledge_posts WHERE status='Published' ORDER BY updated_at DESC LIMIT 6")
     cols=st.columns(3)
     for i,(_,post) in enumerate(posts.iterrows()):
@@ -818,7 +1040,7 @@ def admin():
 def my_house_of_wax():
     header()
     st.header('My House of Wax')
-    st.write('Your account area for buying, selling, messages, feedback, admin tools, and testing tools.')
+    st.write('Your branded account area for buying, selling, messages, feedback, content tools, admin tools, and testing tools.')
     st.info('For a cleaner public site, dashboards live here instead of being spread across the main navigation.')
 
     section=st.radio('Choose your workspace',[

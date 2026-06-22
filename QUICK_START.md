@@ -1,4 +1,4 @@
-# Quick Start V20
+# Quick Start V21
 
 Upload:
 
@@ -10,7 +10,7 @@ Reboot Streamlit.
 
 Confirm:
 
-`Running V20 MY HOUSE OF WAX`
+`Running V21 VISUAL IDENTITY + BRAND POLISH`
 
 Test:
 
@@ -19,7 +19,3 @@ Test:
 3. Knowledge Hub
 4. Sell on House Of Wax
 5. My House of Wax
-6. My House of Wax > Buyer Account
-7. My House of Wax > Seller Tools
-8. My House of Wax > Content Admin
-9. My House of Wax > Admin
