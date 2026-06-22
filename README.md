@@ -1,33 +1,30 @@
-# House Of Wax V22 Content Engine Expansion
+# House Of Wax V23 Launch Prep + Public Mode
 
 You should see:
 
-`Running V22 CONTENT ENGINE EXPANSION`
+`Running V23 LAUNCH PREP + PUBLIC MODE`
 
 ## What changed
 
-- Added Content Series table
-- Added Content Campaigns table
-- Added Content Repurposing table
-- Added Content Series admin tools
-- Added Campaign planning tools
-- Added article repurposing tools for:
-  - social captions
-  - short-form video scripts
-  - newsletter blurbs
-  - marketplace callouts
-
-## Series included
-
-- Wax 101
-- Crate Talk
-- Behind the Record
-- The Culture File
-- Then & Now
-- Press Play
-- Format Focus
-- House Rules
+- Added Testing mode toggle
+- Cleaned public navigation
+- Added About page
+- Added Trust & Safety page
+- Added Contact / Newsletter page
+- Added Seller Standards content
+- Added Buyer Expectations content
+- Added Launch Checklist inside My House of Wax when Testing mode is on
+- Hid Admin/Test Setup/Auctions/Seller Stores unless Testing mode is on
+- Kept core public pages simple:
+  - Home
+  - Marketplace
+  - Knowledge Hub
+  - Sell on House Of Wax
+  - About
+  - Trust & Safety
+  - Contact / Newsletter
+  - My House of Wax
 
 ## Business documents
 
-The V22 ZIP also includes the earlier business planning documents at the root level.
+Business plan, startup budget, revenue model, and policy drafts are still included in the ZIP.

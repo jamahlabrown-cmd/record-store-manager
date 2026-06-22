@@ -1,4 +1,4 @@
-# Quick Start V22
+# Quick Start V23
 
 Upload:
 
@@ -10,12 +10,22 @@ Reboot Streamlit.
 
 Confirm:
 
-`Running V22 CONTENT ENGINE EXPANSION`
+`Running V23 LAUNCH PREP + PUBLIC MODE`
 
-Test:
+Test public mode:
+1. Home
+2. Marketplace
+3. Knowledge Hub
+4. Sell on House Of Wax
+5. About
+6. Trust & Safety
+7. Contact / Newsletter
+8. My House of Wax
 
-1. My House of Wax
-2. Content Admin
-3. Content Series
-4. Campaigns
-5. Generate repurposing assets from a Knowledge Hub article
+Then turn on Testing mode in the sidebar and test:
+1. Content Admin
+2. Admin
+3. Test Setup
+4. Auctions
+5. Seller Stores
+6. Launch Checklist

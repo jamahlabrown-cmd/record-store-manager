@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V22 CONTENT ENGINE EXPANSION'
+APP_VERSION='V23 LAUNCH PREP + PUBLIC MODE'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -796,6 +796,21 @@ def home():
     with r:
         x=home_block('weekly_focus'); mini_card(x.get('title','This Week at House Of Wax'),x.get('subtitle','Matrix / Runout'),x.get('body','Runout markings can reveal pressing details.'))
     st.markdown('---')
+    st.markdown('---')
+    c1,c2,c3=st.columns(3)
+    with c1:
+        with st.container(border=True):
+            st.subheader('About House Of Wax')
+            st.write('Learn what the platform is, who it is for, and why culture and trust are built in.')
+    with c2:
+        with st.container(border=True):
+            st.subheader('Trust & Safety')
+            st.write('Read the standards behind buyer/seller feedback, transparency, and marketplace trust.')
+    with c3:
+        with st.container(border=True):
+            st.subheader('Join the List')
+            st.write('Sign up for Knowledge Hub updates, collecting tips, culture stories, and future drops.')
+
     section_header('Learn the Culture','Start with the basics or go deeper into pressings, grading, formats, trust, and music history.','Education + Discovery')
     tiles=[
         ('Record Collecting 101','Learn the basic language of collecting.'),
@@ -889,7 +904,7 @@ def test_setup():
     st.subheader('Buyers'); st.dataframe(table('buyers'),use_container_width=True); st.subheader('Sellers'); st.dataframe(table('sellers'),use_container_width=True); st.subheader('Products'); st.dataframe(table('products'),use_container_width=True)
 def register():
     header(); st.header('Sell on House Of Wax / Create Accounts')
-    st.info('House Of Wax is the platform. Independent sellers list their own inventory. House Of Wax can also sell through its official seller account for branded merch, official drops, curated goods, and platform items. Seller tools now live under My House of Wax.'); btab,stab=st.tabs(['Buyer','Seller store'])
+    st.info('House Of Wax is the platform. Independent sellers list their own inventory. House Of Wax can also sell through its official seller account for branded merch, official drops, curated goods, and platform items. Seller tools now live under My House of Wax. Before public launch, sellers should review Seller Standards and House Of Wax trust expectations.'); btab,stab=st.tabs(['Buyer','Seller store'])
     with btab:
         with st.form('buyerform'):
             name=st.text_input('Buyer name'); email=st.text_input('Buyer email'); phone=st.text_input('Phone'); city=st.text_input('City'); state=st.text_input('State'); bio=st.text_area('Buyer bio'); sub=st.form_submit_button('Create buyer')
@@ -1071,21 +1086,131 @@ def admin():
             if st.button('Delete row') and confirm: run(f'DELETE FROM {t} WHERE id=?',(int(rid),)); st.success('Deleted.')
 
 
+
+# ---------- V23 Launch Prep + Public Pages ----------
+def about_house_of_wax():
+    header()
+    st.header('About House Of Wax')
+    st.write('House Of Wax is a music marketplace and culture platform built for collectors, sellers, and people who want to understand music culture the right way.')
+    st.markdown("""
+    <div class="how-callout">
+    House Of Wax is not just a place to list items. It is a marketplace with education, culture, trust standards, and community built into the experience.
+    </div>
+    """, unsafe_allow_html=True)
+    c1,c2,c3=st.columns(3)
+    with c1:
+        st.subheader('Marketplace')
+        st.write('Browse records, CDs, cassettes, memorabilia, clothing, branded merch, official drops, and culture goods from approved sellers.')
+    with c2:
+        st.subheader('Knowledge Hub')
+        st.write('Learn about grading, barcodes, matrix/runouts, formats, collecting basics, music history, scenes, genres, and marketplace trust.')
+    with c3:
+        st.subheader('Community')
+        st.write('House Of Wax is built around transparency, public reputation, education, and respect for music culture.')
+
+def trust_safety():
+    header()
+    st.header('Trust & Safety')
+    st.write('House Of Wax is designed to make marketplace trust visible and easier to understand.')
+    st.markdown('### What House Of Wax believes')
+    st.write('- Condition transparency matters.')
+    st.write('- Buyer and seller feedback should help the community make better decisions.')
+    st.write('- Sellers should accurately describe items, ship responsibly, and communicate clearly.')
+    st.write('- Buyers should pay promptly, ask questions before purchasing, and respect seller policies.')
+    st.write('- Education reduces disputes and builds a stronger marketplace.')
+    st.markdown('### Trust tools being built')
+    brand_badges(['Public feedback','Seller approval','Buyer history','Condition education','Marketplace standards'])
+    st.info('This prototype is not yet a production payment or dispute platform. Policies should be reviewed before public launch.')
+
+def seller_standards():
+    header()
+    st.header('Seller Standards')
+    st.write('Sellers on House Of Wax should help build a trusted marketplace and music culture community.')
+    st.markdown('### Sellers are expected to')
+    st.write('- Describe items honestly.')
+    st.write('- Use clear condition notes.')
+    st.write('- Add barcode, catalog, matrix/runout, label, format, and release details when available.')
+    st.write('- Upload strong photos.')
+    st.write('- Price clearly.')
+    st.write('- Respond to buyers professionally.')
+    st.write('- Ship items safely and on time.')
+    st.write('- Respect House Of Wax trust standards.')
+    st.markdown('### House Of Wax Official')
+    st.write('House Of Wax can also sell branded merchandise, official drops, curated goods, and platform items through the House Of Wax Official seller account.')
+
+def buyer_expectations():
+    header()
+    st.header('Buyer Expectations')
+    st.write('House Of Wax buyers should understand what they are buying and use the Knowledge Hub to collect smarter.')
+    st.markdown('### Buyers are expected to')
+    st.write('- Read item details before requesting to buy.')
+    st.write('- Review photos, condition notes, and seller information.')
+    st.write('- Ask questions before committing.')
+    st.write('- Pay promptly when payment is due.')
+    st.write('- Avoid buyer remorse disputes when an item was accurately described.')
+    st.write('- Leave fair feedback after the transaction.')
+    st.markdown('### Buying smarter')
+    st.write('Use the Knowledge Hub to learn grading, formats, barcodes, matrix/runouts, bootlegs, reissues, and marketplace trust before buying.')
+
+def contact_newsletter():
+    header()
+    st.header('Contact / Newsletter')
+    st.write('Join the House Of Wax list for collecting tips, culture stories, Knowledge Hub updates, marketplace announcements, and future drops.')
+    with st.form('public_newsletter_signup'):
+        name=st.text_input('Name')
+        email=st.text_input('Email')
+        interest=st.selectbox('What are you most interested in?',['Records','Music culture','Marketplace updates','Selling on House Of Wax','House Of Wax merch','General updates'])
+        submitted=st.form_submit_button('Join the list')
+        if submitted:
+            if email:
+                try:
+                    run("INSERT INTO newsletter_signups(name,email,interest,created_at) VALUES(?,?,?,?)",(name,email,interest,now()))
+                    st.success('You are on the House Of Wax list.')
+                except Exception as e:
+                    st.error(f'Newsletter signup table is not ready yet: {e}')
+            else:
+                st.error('Add an email address.')
+    st.markdown('### Contact')
+    st.write('For now, use this page as the contact placeholder. Before launch, connect this to a real House Of Wax email or contact form.')
+
+def launch_checklist():
+    header()
+    st.header('Launch Checklist')
+    st.write('Use this checklist before sharing House Of Wax more widely.')
+    checklist=[
+        'Confirm public navigation works',
+        'Confirm Marketplace has clean sample or real listings',
+        'Confirm Knowledge Hub has strong starter content',
+        'Confirm Sell on House Of Wax explains seller onboarding',
+        'Confirm My House of Wax works for buyer/seller/admin tools',
+        'Hide or restrict Test Setup before public launch',
+        'Review seller standards',
+        'Review buyer expectations',
+        'Review trust and safety language',
+        'Set Streamlit subdomain',
+        'Prepare official House Of Wax email/contact',
+        'Prepare logo and brand images',
+        'Prepare first 10 Knowledge Hub posts',
+        'Prepare first newsletter signup campaign',
+        'Review business plan and budget'
+    ]
+    for item in checklist:
+        st.checkbox(item,key=f"launch_check_{item}")
+    st.info('This checklist is saved only in the current Streamlit session. Production launch tracking should later be stored in the database.')
+
+
 def my_house_of_wax():
     header()
     st.header('My House of Wax')
     st.write('Your branded account area for buying, selling, messages, feedback, content tools, admin tools, and testing tools.')
     st.info('For a cleaner public site, dashboards live here instead of being spread across the main navigation.')
 
-    section=st.radio('Choose your workspace',[
-        'Buyer Account',
-        'Seller Tools',
-        'Content Admin',
-        'Admin',
-        'Test Setup',
-        'Auctions',
-        'Seller Stores'
-    ])
+    workspace_options=['Buyer Account','Seller Tools']
+    if testing_mode:
+        workspace_options += ['Content Admin','Admin','Test Setup','Auctions','Seller Stores','Launch Checklist']
+    else:
+        workspace_options += ['Content Admin']
+    section=st.radio('Choose your workspace',workspace_options)
 
     if section=='Buyer Account':
         buyer_dashboard()
@@ -1101,12 +1226,24 @@ def my_house_of_wax():
         auctions()
     elif section=='Seller Stores':
         seller_stores()
+    elif section=='Launch Checklist':
+        launch_checklist()
 
 
+
+def app_mode():
+    # Public mode cleans the main site; testing mode exposes internal prototype tools.
+    return st.sidebar.toggle('Testing mode', value=False, help='Turn on to show prototype/admin/testing tools inside My House of Wax.')
+
+
+testing_mode=app_mode()
 st.sidebar.caption('Public: Home, Marketplace, Knowledge Hub, Sell on House Of Wax. Accounts/tools: My House of Wax.')
-menu=st.sidebar.radio('House Of Wax',['Home','Marketplace','Knowledge Hub','Sell on House Of Wax','My House of Wax'])
+menu=st.sidebar.radio('House Of Wax',['Home','Marketplace','Knowledge Hub','Sell on House Of Wax','About','Trust & Safety','Contact / Newsletter','My House of Wax'])
 if menu=='Home': home()
 elif menu=='Marketplace': marketplace()
 elif menu=='Knowledge Hub': knowledge_hub()
 elif menu=='Sell on House Of Wax': register()
+elif menu=='About': about_house_of_wax()
+elif menu=='Trust & Safety': trust_safety()
+elif menu=='Contact / Newsletter': contact_newsletter()
 elif menu=='My House of Wax': my_house_of_wax()
