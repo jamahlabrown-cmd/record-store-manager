@@ -1,26 +1,36 @@
-# House Of Wax V18 Home + Editorial Experience
+# House Of Wax V16.3 Root App Deploy Fix
+
+This package fixes the deployment confusion.
+
+The previous traceback proves Streamlit was still running an old root `app.py` that contained:
+
+`app_app_settings`
+
+This V16.3 package contains a clean root `app.py` with:
+
+`app_settings`
+
+and no `app_app_settings`.
 
 You should see:
 
-`Running V18 HOME + EDITORIAL EXPERIENCE`
+`Running V16.3 ROOT APP DEPLOY FIX`
 
-New homepage:
-- Editorial hero
-- Featured story
-- This Week at House Of Wax
-- Learn the Culture tiles
-- Collector Quick Tips
-- Did You Know?
-- Genre / Era Spotlight
-- Editorial Pick
-- Latest from Knowledge Hub
-- Newsletter signup
+## Critical upload instruction
 
-New Content Admin tool:
-- Homepage Editor
-- Homepage blocks
-- Quick tips
-- Did You Know facts
-- Newsletter signups
+Do not upload the folder as a folder.
 
-This is House Of Wax-owned education and culture, not seller promotion.
+Replace the repository root file:
+
+`app.py`
+
+with the new `app.py`.
+
+Then upload:
+
+- requirements.txt
+- runtime.txt
+
+Then reboot Streamlit.
+
+If Streamlit still shows the old `app_app_settings` traceback, the root `app.py` was not replaced.
