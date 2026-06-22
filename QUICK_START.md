@@ -1,4 +1,4 @@
-# Quick Start V25
+# Quick Start V25.1
 
 Upload:
 
@@ -10,20 +10,11 @@ Reboot Streamlit.
 
 Confirm:
 
-`Running V25 HOUSE OF WAX RELEASE DATABASE`
+`Running V25.1 BARCODE KEY FIX`
 
 Test:
-
-1. Go to My House of Wax
-2. Open Seller Tools
-3. Open Upload Product or Barcode Scanner
-4. Enter/scan barcode
-5. Click Lookup barcode
-6. Select match
-7. Click Use this match to auto-fill listing draft
-8. Confirm it says it saved to House Of Wax release database
-9. Save product listing
-10. Turn on Testing mode
-11. Go to My House of Wax > Release Database or Admin > Release Database
-12. Review the release
-13. Mark it Approved or Needs Review
+1. My House of Wax
+2. Seller Tools
+3. Upload Product
+4. Barcode Scanner
+5. Make sure both open without duplicate key error

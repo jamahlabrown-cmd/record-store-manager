@@ -8,7 +8,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25 HOUSE OF WAX RELEASE DATABASE'
+APP_VERSION='V25.1 BARCODE KEY FIX'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -1255,12 +1255,12 @@ def lookup_barcode(barcode):
             pass
     return results
 
-def render_barcode_lookup_widget():
+def render_barcode_lookup_widget(key_prefix='main'):
     seed_listing_media_policy()
     st.markdown('### Barcode / UPC lookup')
     st.write('For records, CDs, and cassettes, scan or type the barcode. House Of Wax checks its own release database first, then outside sources for release information and cover art. For shirts, dolls, memorabilia, merch, and accessories, sellers should use a photo of the exact item or an official product image.')
     c1,c2=st.columns([2,1])
-    barcode=c1.text_input('Scan or enter barcode / UPC',key='v24_lookup_barcode',placeholder='Click here, then scan with USB/Bluetooth scanner or type manually')
+    barcode=c1.text_input('Scan or enter barcode / UPC',key=f'v24_lookup_barcode_{key_prefix}',placeholder='Click here, then scan with USB/Bluetooth scanner or type manually')
     lookup_clicked=c2.button('Lookup barcode')
     if lookup_clicked:
         code=normalize_barcode(barcode)
@@ -1270,16 +1270,16 @@ def render_barcode_lookup_widget():
             with st.spinner('Looking up barcode...'):
                 matches=lookup_barcode(code)
             if matches:
-                st.session_state['v24_barcode_matches']=matches
-                st.session_state['v24_lookup_barcode_clean']=code
+                st.session_state[f'v24_barcode_matches_{key_prefix}']=matches
+                st.session_state[f'v24_lookup_barcode_clean_{key_prefix}']=code
                 st.success(f'Found {len(matches)} possible match(es). Choose one below to auto-fill the listing draft.')
             else:
                 st.warning('No lookup match found yet. You can still enter the product manually. For Discogs lookup, add a DISCOGS_TOKEN in Streamlit secrets.')
 
-    matches=st.session_state.get('v24_barcode_matches',[])
+    matches=st.session_state.get(f'v24_barcode_matches_{key_prefix}',[])
     if matches:
         labels=[f"{i+1}. {safe(m.get('artist'))} - {safe(m.get('title'))} ({safe(m.get('source'))}, {safe(m.get('release_year'))})" for i,m in enumerate(matches)]
-        pick=st.selectbox('Possible barcode matches',labels,key='v24_match_select')
+        pick=st.selectbox('Possible barcode matches',labels,key=f'v24_match_select_{key_prefix}')
         idx=int(pick.split('.',1)[0])-1
         selected=matches[idx]
         colA,colB=st.columns([1,2])
@@ -1297,9 +1297,9 @@ def render_barcode_lookup_widget():
             st.write(f"**Source:** {safe(selected.get('source'))}")
             if safe(selected.get('external_url')):
                 st.write(f"External release URL: {safe(selected.get('external_url'))}")
-        if st.button('Use this match to auto-fill listing draft'):
+        if st.button('Use this match to auto-fill listing draft',key=f'v24_use_match_{key_prefix}'):
             st.session_state['v24_autofill_listing']=selected
-            st.session_state['v24_autofill_barcode']=st.session_state.get('v24_lookup_barcode_clean',normalize_barcode(barcode))
+            st.session_state['v24_autofill_barcode']=st.session_state.get(f'v24_lookup_barcode_clean_{key_prefix}',normalize_barcode(barcode))
             try:
                 rid=create_or_update_how_release(st.session_state['v24_autofill_barcode'],selected)
                 st.session_state['v25_release_id']=rid
@@ -1544,12 +1544,12 @@ def seller_dashboard():
             shipping=st.text_area('Shipping policy',value=safe(pol.get('shipping_policy') if len(pol) else 'Ships within 3 business days.')); returns=st.text_area('Return policy',value=safe(pol.get('return_policy') if len(pol) else 'No buyer remorse returns unless seller approves.')); grading=st.text_area('Grading policy',value=safe(pol.get('grading_policy') if len(pol) else 'Collector grading standards.')); sub=st.form_submit_button('Save policies')
         if sub: run('INSERT OR REPLACE INTO seller_policies(seller_id,shipping_policy,return_policy,grading_policy) VALUES(?,?,?,?)',(sid,shipping,returns,grading)); st.success('Policies saved.')
     with tabs[2]:
-        render_barcode_lookup_widget()
+        render_barcode_lookup_widget('upload_product')
         upload_product(sid,'normal_upload')
     with tabs[3]:
         st.subheader('Barcode scanner / inventory quick add')
         st.info('Click into the barcode field and scan with a USB/Bluetooth scanner, phone keyboard scanner, or type/paste the barcode.')
-        render_barcode_lookup_widget()
+        render_barcode_lookup_widget('barcode_quick_add')
         upload_product(sid,'barcode_quick_add')
     with tabs[4]:
         csv=st.file_uploader('Upload CSV',type=['csv']); st.caption('Supports barcode,catalog_number,matrix_runout,artist,title,format,label,release_year,genre,price,quantity,image_url')
