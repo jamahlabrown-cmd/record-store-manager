@@ -1,4 +1,4 @@
-# Quick Start V19
+# Quick Start V19.1
 
 Upload:
 
@@ -6,17 +6,13 @@ Upload:
 - requirements.txt
 - runtime.txt
 
-Then reboot Streamlit.
+Reboot Streamlit.
 
 Confirm:
 
-`Running V19 NAV CLEANUP + OFFICIAL SELLER`
+`Running V19.1 DUPLICATE BUTTON KEY FIX`
 
-Then test:
-
-1. Home
-2. Marketplace
-3. Knowledge Hub
-4. Sell on House Of Wax
-5. Admin > Create/repair House Of Wax Official seller
-6. Seller Dashboard with official@houseofwax.com / official123
+Test:
+- Knowledge Hub
+- Read article buttons
+- Home page latest Knowledge Hub cards

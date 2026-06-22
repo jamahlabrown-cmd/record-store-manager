@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V19 NAV CLEANUP + OFFICIAL SELLER'
+APP_VERSION='V19.1 DUPLICATE BUTTON KEY FIX'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -310,13 +310,14 @@ def make_social_pack(title,category,summary,body,tip):
     newsletter=f"This week in the House Of Wax Knowledge Hub: {title}. {core} This is part of our mission to make record collecting, marketplace trust, and music culture easier to understand for everyone."
     return {'Instagram/Facebook caption':caption,'Short-form video script':reel,'Facebook educational post':fb,'Newsletter blurb':newsletter,'Hashtags':hashtag_base,'CTA':'Learn more in the House Of Wax Knowledge Hub.'}
 
-def knowledge_card(row):
+def knowledge_card(row, key_prefix='knowledge'):
     with st.container(border=True):
         if safe(row.get('image_url')): st.image(safe(row.get('image_url')),use_container_width=True)
         st.subheader(safe(row.get('title')))
         st.caption(f"{safe(row.get('category'))} • {safe(row.get('level'))} • {safe(row.get('audience'))}")
         st.write(safe(row.get('summary')))
-        if st.button('Read article',key=f"read_knowledge_{int(row['id'])}"):
+        unique_key=f"read_knowledge_{key_prefix}_{int(row['id'])}"
+        if st.button('Read article',key=unique_key):
             st.session_state['selected_knowledge_id']=int(row['id']); st.rerun()
 
 def knowledge_hub():
@@ -349,7 +350,7 @@ def knowledge_hub():
     featured=df("SELECT * FROM knowledge_posts WHERE status='Published' AND featured='Yes' ORDER BY updated_at DESC")
     if not featured.empty:
         st.subheader('Featured education')
-        knowledge_card(featured.iloc[0])
+        knowledge_card(featured.iloc[0], 'featured')
     st.subheader('Search the education library')
     q=st.text_input('Search topics like VG+, barcode, runout, bootleg, storage, trust')
     cats=['All']+KNOWLEDGE_CATEGORIES
@@ -366,7 +367,7 @@ def knowledge_hub():
     if cat!='All': posts=posts[posts['category']==cat]
     cols=st.columns(2)
     for i,(_,row) in enumerate(posts.iterrows()):
-        with cols[i%2]: knowledge_card(row)
+        with cols[i%2]: knowledge_card(row, f'library_{i}')
     st.divider()
     st.subheader('Collector glossary')
     terms=df("SELECT * FROM glossary_terms WHERE status='Published' ORDER BY term")
@@ -574,7 +575,7 @@ def home():
     posts=df("SELECT * FROM knowledge_posts WHERE status='Published' ORDER BY updated_at DESC LIMIT 6")
     cols=st.columns(3)
     for i,(_,post) in enumerate(posts.iterrows()):
-        with cols[i%3]: knowledge_card(post)
+        with cols[i%3]: knowledge_card(post, f'home_latest_{i}')
     st.markdown('---')
     news=home_block('newsletter')
     st.markdown(f"## {safe(news.get('title'),'Join House Of Wax')}")

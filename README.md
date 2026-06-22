@@ -1,38 +1,13 @@
-# House Of Wax V19 Navigation Cleanup + Official Seller
+# House Of Wax V19.1 Duplicate Button Key Fix
 
 You should see:
 
-`Running V19 NAV CLEANUP + OFFICIAL SELLER`
+`Running V19.1 DUPLICATE BUTTON KEY FIX`
 
-## What changed
+## Fixed
 
-- Removed the separate Music + Culture main tab
-- Folded culture/history/discovery into Knowledge Hub
-- Renamed Register / Sell to Sell on House Of Wax
-- Added House Of Wax Official seller account helper
-- Added Official House Of Wax badge
-- Added House Of Wax merch / official drops categories
-- Marketplace now clearly explains that all available items live there
-- Knowledge Hub now covers education, culture, history, discovery, formats, genres, and trust
+This fixes the Streamlit error:
 
-## New navigation
+`StreamlitDuplicateElementKey`
 
-- Home
-- Marketplace
-- Knowledge Hub
-- Sell on House Of Wax
-- Buyer Dashboard
-- Seller Dashboard
-- Content Admin
-- Admin
-- Test Setup
-- Auctions
-- Seller Stores
-
-## Official seller
-
-Name: House Of Wax Official  
-Email: official@houseofwax.com  
-Access code: official123
-
-Use this account for House Of Wax branded merch, official drops, curated goods, and platform items.
+The same Knowledge Hub article could appear in more than one section. Each `Read article` button now has a unique key based on the section where it appears.
