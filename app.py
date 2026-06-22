@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25.5 SEARCH FALLBACK UPGRADE'
+APP_VERSION='V25.6 BROAD MUSIC SEARCH'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -1372,62 +1372,303 @@ def lookup_discogs_text_search(artist='', title='', barcode=''):
     except Exception:
         return []
 
+
+def lookup_itunes_text_search(artist='', title='', barcode=''):
+    artist=safe(artist)
+    title=safe(title)
+    code=normalize_barcode(barcode)
+    term=' '.join([artist,title]).strip() or code
+    if not term:
+        return []
+    try:
+        url='https://itunes.apple.com/search'
+        params={'term':term,'media':'music','entity':'album','limit':25}
+        r=requests.get(url,params=params,timeout=10)
+        if r.status_code!=200:
+            return []
+        data=r.json()
+        results=[]
+        for item in data.get('results',[])[:25]:
+            album=safe(item.get('collectionName'))
+            rel_artist=safe(item.get('artistName'))
+            year=safe(item.get('releaseDate'))[:4]
+            img=safe(item.get('artworkUrl100'))
+            if img:
+                img=img.replace('100x100bb','600x600bb')
+            ext=safe(item.get('collectionViewUrl'))
+            cid=safe(item.get('collectionId'))
+            genre=safe(item.get('primaryGenreName'))
+            # filter lightly if artist/title were entered
+            hay=f"{rel_artist} {album}".lower()
+            if artist and artist.lower().split()[0] not in hay:
+                # Do not filter too aggressively; just continue if very unrelated
+                continue
+            if title and not any(part.lower() in hay for part in title.split()[:3]):
+                continue
+            results.append({
+                'source':'Apple/iTunes',
+                'external_id':cid,
+                'artist':rel_artist,
+                'title':album,
+                'format':'Digital album / release reference',
+                'label':'',
+                'release_year':year,
+                'country':safe(item.get('country')),
+                'genre':genre,
+                'style':'',
+                'catalog_number':'',
+                'image_url':img,
+                'external_url':ext,
+                'raw_summary':'Apple iTunes Search API album match'
+            })
+        return results
+    except Exception:
+        return []
+
+def lookup_musicbrainz_broad_search(artist='', title='', barcode=''):
+    artist=safe(artist)
+    title=safe(title)
+    code=normalize_barcode(barcode)
+    queries=[]
+    if code:
+        queries.append(f'barcode:{code}')
+    if artist and title:
+        queries.extend([
+            f'artist:{artist} AND release:{title}',
+            f'"{artist}" AND "{title}"',
+            f'{artist} {title}'
+        ])
+    elif artist:
+        queries.extend([f'artist:{artist}', artist])
+    elif title:
+        queries.extend([f'release:{title}', title])
+    results=[]
+    seen=set()
+    for q in queries:
+        try:
+            url='https://musicbrainz.org/ws/2/release/'
+            params={'query':q,'fmt':'json','limit':15}
+            headers={'User-Agent':'HouseOfWaxPrototype/1.0 (prototype lookup)'}
+            r=requests.get(url,params=params,headers=headers,timeout=10)
+            if r.status_code!=200:
+                continue
+            data=r.json()
+            for rel in data.get('releases',[])[:15]:
+                rel_artist=''
+                credits=rel.get('artist-credit') or []
+                if credits:
+                    parts=[]
+                    for c in credits:
+                        if isinstance(c,dict):
+                            if 'artist' in c and isinstance(c['artist'],dict):
+                                parts.append(c['artist'].get('name',''))
+                            elif 'name' in c:
+                                parts.append(c.get('name',''))
+                    rel_artist=' '.join([p for p in parts if p]).strip()
+                album=safe(rel.get('title'))
+                key=(safe(rel.get('id')),album)
+                if key in seen:
+                    continue
+                seen.add(key)
+                label=''
+                cat=''
+                infos=rel.get('label-info') or []
+                if infos:
+                    first=infos[0] or {}
+                    label=(first.get('label') or {}).get('name','') if isinstance(first.get('label'),dict) else ''
+                    cat=first.get('catalog-number','')
+                fmt=''
+                media=rel.get('media') or []
+                if media:
+                    fmt=media[0].get('format','')
+                year=safe(rel.get('date'))[:4]
+                rid=safe(rel.get('id'))
+                cover=f'https://coverartarchive.org/release/{rid}/front-500' if rid else ''
+                ext=f'https://musicbrainz.org/release/{rid}' if rid else ''
+                results.append({
+                    'source':'MusicBrainz Broad',
+                    'external_id':rid,
+                    'artist':rel_artist,
+                    'title':album,
+                    'format':fmt,
+                    'label':label,
+                    'release_year':year,
+                    'country':safe(rel.get('country')),
+                    'genre':'',
+                    'style':'',
+                    'catalog_number':cat,
+                    'image_url':cover,
+                    'external_url':ext,
+                    'raw_summary':f'MusicBrainz broad search match: {q}'
+                })
+        except Exception:
+            continue
+        if len(results) >= 10:
+            break
+    return results[:15]
+
+def lookup_discogs_broad_search(artist='', title='', barcode=''):
+    # Broad q search. Works best with a DISCOGS_TOKEN, but will still attempt a public search.
+    artist=safe(artist)
+    title=safe(title)
+    code=normalize_barcode(barcode)
+    token=''
+    try:
+        token=st.secrets.get('DISCOGS_TOKEN','')
+    except Exception:
+        token=''
+    queries=[]
+    if code:
+        queries.append(code)
+    if artist and title:
+        queries.append(f'{artist} {title}')
+    elif artist:
+        queries.append(artist)
+    elif title:
+        queries.append(title)
+    results=[]
+    seen=set()
+    for q in queries:
+        try:
+            params={'q':q,'type':'release','per_page':15}
+            if token:
+                params['token']=token
+            headers={'User-Agent':'HouseOfWaxPrototype/1.0'}
+            r=requests.get('https://api.discogs.com/database/search',params=params,headers=headers,timeout=10)
+            if r.status_code!=200:
+                continue
+            data=r.json()
+            for item in data.get('results',[])[:15]:
+                rid=safe(item.get('id'))
+                full=safe(item.get('title'))
+                key=(rid,full)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rel_artist=''
+                album=full
+                if ' - ' in full:
+                    rel_artist,album=full.split(' - ',1)
+                formats=item.get('format') or []
+                labels=item.get('label') or []
+                genres=item.get('genre') or []
+                styles=item.get('style') or []
+                results.append({
+                    'source':'Discogs Broad',
+                    'external_id':rid,
+                    'artist':rel_artist,
+                    'title':album,
+                    'format':', '.join(formats) if isinstance(formats,list) else safe(formats),
+                    'label':', '.join(labels) if isinstance(labels,list) else safe(labels),
+                    'release_year':safe(item.get('year')),
+                    'country':safe(item.get('country')),
+                    'genre':', '.join(genres) if isinstance(genres,list) else safe(genres),
+                    'style':', '.join(styles) if isinstance(styles,list) else safe(styles),
+                    'catalog_number':'',
+                    'image_url':safe(item.get('cover_image')) or safe(item.get('thumb')),
+                    'external_url':f'https://www.discogs.com/release/{rid}' if rid else '',
+                    'raw_summary':f'Discogs broad search match: {q}'
+                })
+        except Exception:
+            continue
+        if len(results) >= 10:
+            break
+    return results[:15]
+
+def score_release_match(result, artist='', title=''):
+    artist=safe(artist).lower()
+    title=safe(title).lower()
+    hay=f"{safe(result.get('artist'))} {safe(result.get('title'))}".lower()
+    score=0
+    if artist:
+        for part in artist.split():
+            if part and part in hay:
+                score+=10
+    if title:
+        for part in title.split():
+            if part and part in hay:
+                score+=12
+    if safe(result.get('image_url')):
+        score+=5
+    if safe(result.get('release_year')):
+        score+=3
+    if safe(result.get('source')).startswith('Discogs'):
+        score+=4
+    if safe(result.get('source')).startswith('Apple'):
+        score+=6
+    return score
+
+def dedupe_and_rank_results(results, artist='', title=''):
+    seen=set()
+    unique=[]
+    for r in results:
+        key=(safe(r.get('source')),safe(r.get('external_id')),safe(r.get('artist')).lower(),safe(r.get('title')).lower())
+        if key not in seen:
+            seen.add(key)
+            r=dict(r)
+            r['_match_score']=score_release_match(r,artist,title)
+            unique.append(r)
+    unique.sort(key=lambda x:x.get('_match_score',0),reverse=True)
+    return unique[:25]
+
+
 def lookup_by_artist_title_with_diagnostics(artist='', title='', barcode=''):
     diagnostics=[]
     artist=safe(artist)
     title=safe(title)
     code=normalize_barcode(barcode)
-    diagnostics.append({'Step':'Search terms','Status':f'Artist: {artist or "blank"} | Title: {title or "blank"} | Barcode: {code or "blank"}','Details':'Text search is used when barcode-only lookup does not find a match.'})
+    diagnostics.append({'Step':'Search terms','Status':f'Artist: {artist or "blank"} | Title: {title or "blank"} | Barcode: {code or "blank"}','Details':'This broad search is used when barcode-only lookup does not find a match.'})
     results=[]
 
-    # Discogs search first because it is stronger for physical releases.
+    # Discogs broad search first for physical music culture/collector data.
     try:
-        dres=lookup_discogs_text_search(artist,title,code)
+        dres=lookup_discogs_broad_search(artist,title,code)
         if dres:
-            diagnostics.append({'Step':'Discogs search','Status':f'{len(dres)} match(es)','Details':'Discogs search returned release candidates.'})
-            for res in dres:
-                if code:
-                    try:
-                        cache_lookup_result(code,res)
-                        create_or_update_how_release(code,res)
-                    except Exception:
-                        pass
+            diagnostics.append({'Step':'Discogs broad search','Status':f'{len(dres)} match(es)','Details':'Discogs returned release candidates. Works best when DISCOGS_TOKEN is connected.'})
             results.extend(dres)
         else:
-            token_msg='with token' if discogs_token_status() else 'without token'
-            diagnostics.append({'Step':'Discogs search','Status':'No match','Details':f'Discogs search returned no result {token_msg}.'})
+            token_msg='connected' if discogs_token_status() else 'not connected'
+            diagnostics.append({'Step':'Discogs broad search','Status':'No match','Details':f'Discogs returned no result. Discogs token status: {token_msg}.'})
     except Exception as e:
-        diagnostics.append({'Step':'Discogs search','Status':'Error','Details':safe(e)})
+        diagnostics.append({'Step':'Discogs broad search','Status':'Error','Details':safe(e)})
 
+    # Apple/iTunes album search is reliable for popular mainstream artists and gives good cover art.
     try:
-        mbres=lookup_musicbrainz_text_search(artist,title,code)
+        ares=lookup_itunes_text_search(artist,title,code)
+        if ares:
+            diagnostics.append({'Step':'Apple/iTunes album search','Status':f'{len(ares)} match(es)','Details':'Apple/iTunes returned album candidates and artwork. Good fallback for popular artists.'})
+            results.extend(ares)
+        else:
+            diagnostics.append({'Step':'Apple/iTunes album search','Status':'No match','Details':'Apple/iTunes returned no album candidate for these terms.'})
+    except Exception as e:
+        diagnostics.append({'Step':'Apple/iTunes album search','Status':'Error','Details':safe(e)})
+
+    # MusicBrainz broad search uses multiple query styles because strict Lucene queries can miss results.
+    try:
+        mbres=lookup_musicbrainz_broad_search(artist,title,code)
         if mbres:
-            diagnostics.append({'Step':'MusicBrainz search','Status':f'{len(mbres)} match(es)','Details':'MusicBrainz search returned release candidates.'})
-            for res in mbres:
-                if code:
-                    try:
-                        cache_lookup_result(code,res)
-                        create_or_update_how_release(code,res)
-                    except Exception:
-                        pass
+            diagnostics.append({'Step':'MusicBrainz broad search','Status':f'{len(mbres)} match(es)','Details':'MusicBrainz returned release candidates using broad query attempts.'})
             results.extend(mbres)
         else:
-            diagnostics.append({'Step':'MusicBrainz search','Status':'No match','Details':'MusicBrainz search returned no result for these terms.'})
+            diagnostics.append({'Step':'MusicBrainz broad search','Status':'No match','Details':'MusicBrainz returned no result after broad query attempts.'})
     except Exception as e:
-        diagnostics.append({'Step':'MusicBrainz search','Status':'Error','Details':safe(e)})
+        diagnostics.append({'Step':'MusicBrainz broad search','Status':'Error','Details':safe(e)})
 
-    # Deduplicate by source/external_id
-    seen=set()
-    unique=[]
-    for r in results:
-        key=(safe(r.get('source')),safe(r.get('external_id')),safe(r.get('title')))
-        if key not in seen:
-            unique.append(r); seen.add(key)
+    unique=dedupe_and_rank_results(results,artist,title)
+
+    # Save only if barcode exists; otherwise it can be selected and saved when listing is made.
+    if code:
+        for res in unique:
+            try:
+                cache_lookup_result(code,res)
+                create_or_update_how_release(code,res)
+            except Exception:
+                pass
 
     if unique:
-        diagnostics.append({'Step':'Final result','Status':f'{len(unique)} possible match(es)','Details':'Review the candidates and choose the closest release.'})
+        diagnostics.append({'Step':'Final result','Status':f'{len(unique)} possible match(es)','Details':'Review the candidates and choose the closest release. If there are digital-only matches, use them as a starting point and correct format/details manually.'})
     else:
-        diagnostics.append({'Step':'Final result','Status':'Manual entry needed','Details':'No source returned a match by barcode or text search.'})
+        diagnostics.append({'Step':'Final result','Status':'Manual entry needed','Details':'No source returned a match. You can still create the item manually and House Of Wax will store the data over time.'})
     return unique, diagnostics
 
 
@@ -1556,11 +1797,11 @@ def render_barcode_lookup_widget(key_prefix='main'):
     barcode=c1.text_input('Scan or enter barcode / UPC',key=f'v24_lookup_barcode_{key_prefix}',placeholder='Click here, then scan with USB/Bluetooth scanner or type manually')
     lookup_clicked=c2.button('Lookup barcode',key=f'v24_lookup_button_{key_prefix}')
 
-    with st.expander('No barcode match? Search by artist and title'):
+    with st.expander('No barcode match? Broad search by artist and album title'):
         a1,a2=st.columns(2)
         search_artist=a1.text_input('Artist',key=f'v25_search_artist_{key_prefix}',placeholder='Example: Lady Gaga')
-        search_title=a2.text_input('Album / release title',key=f'v25_search_title_{key_prefix}',placeholder='Example: The Fame')
-        text_search_clicked=st.button('Search artist/title',key=f'v25_text_search_button_{key_prefix}')
+        search_title=a2.text_input('Album / release title',key=f'v25_search_title_{key_prefix}',placeholder='Example: The Fame, Born This Way, Chromatica')
+        text_search_clicked=st.button('Search all music sources',key=f'v25_text_search_button_{key_prefix}')
     if lookup_clicked:
         code=normalize_barcode(barcode)
         if not code:
@@ -1577,7 +1818,7 @@ def render_barcode_lookup_widget(key_prefix='main'):
                 st.warning('No lookup match found yet. Review diagnostics below, then manually enter the product if needed.')
 
     if text_search_clicked:
-        with st.spinner('Searching by artist/title...'):
+        with st.spinner('Searching Discogs, Apple/iTunes, and MusicBrainz...'):
             matches,diagnostics=lookup_by_artist_title_with_diagnostics(search_artist,search_title,barcode)
         st.session_state[f'v25_lookup_diagnostics_{key_prefix}']=diagnostics
         if matches:
@@ -2070,7 +2311,7 @@ def barcode_diagnostics_page():
     code=st.text_input('Barcode to test',key='standalone_diag_barcode')
     c1,c2=st.columns(2)
     artist=c1.text_input('Artist fallback',key='standalone_diag_artist',placeholder='Example: Lady Gaga')
-    title=c2.text_input('Title fallback',key='standalone_diag_title',placeholder='Example: The Fame')
+    title=c2.text_input('Title fallback',key='standalone_diag_title',placeholder='Example: The Fame, Born This Way, Chromatica')
     c3,c4=st.columns(2)
     if c3.button('Run barcode diagnostic lookup',key='standalone_diag_run'):
         matches,diagnostics=lookup_barcode_with_diagnostics(code)
@@ -2087,7 +2328,7 @@ def barcode_diagnostics_page():
         for i,m in enumerate(matches,1):
             with st.container(border=True):
                 st.write(f"**{i}. {safe(m.get('artist'))} - {safe(m.get('title'))}**")
-                st.caption(f"{safe(m.get('source'))} • {safe(m.get('format'))} • {safe(m.get('release_year'))}")
+                st.caption(f"{safe(m.get('source'))} • {safe(m.get('format'))} • {safe(m.get('release_year'))} • score {safe(m.get('_match_score'))}")
                 if safe(m.get('image_url')):
                     st.image(safe(m.get('image_url')),width=160)
                 st.write(safe(m.get('external_url')))
