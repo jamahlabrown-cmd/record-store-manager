@@ -1,18 +1,21 @@
-# House Of Wax V25.1 Barcode Key Fix
+# House Of Wax V25.2 Barcode Widget ID Fix
 
 You should see:
 
-`Running V25.1 BARCODE KEY FIX`
+`Running V25.2 BARCODE WIDGET ID FIX`
 
 ## Fixed
 
-This fixes the StreamlitDuplicateElementKey crash caused by the barcode lookup widget appearing in more than one Seller Tools tab.
+This fixes the remaining StreamlitDuplicateElementId issue in the barcode lookup widget.
+
+The previous fix gave the barcode text field a unique key, but the `Lookup barcode` button also needed a unique key.
 
 ## What changed
 
-- Barcode lookup widget now accepts a unique key prefix
-- Upload Product barcode lookup uses its own keys
-- Barcode Scanner lookup uses its own keys
-- Match selector and Use Match button also use unique keys
+- Barcode text input uses unique keys
+- Lookup barcode button uses unique keys
+- Possible match selector uses unique keys
+- Use Match button uses unique keys
+- Upload Product and Barcode Scanner tabs can both show barcode lookup without crashing
 
-All V25 release database features remain.
+All V25 House Of Wax Release Database features remain.

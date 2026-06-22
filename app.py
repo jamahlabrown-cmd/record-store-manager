@@ -8,7 +8,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25.1 BARCODE KEY FIX'
+APP_VERSION='V25.2 BARCODE WIDGET ID FIX'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -1261,7 +1261,7 @@ def render_barcode_lookup_widget(key_prefix='main'):
     st.write('For records, CDs, and cassettes, scan or type the barcode. House Of Wax checks its own release database first, then outside sources for release information and cover art. For shirts, dolls, memorabilia, merch, and accessories, sellers should use a photo of the exact item or an official product image.')
     c1,c2=st.columns([2,1])
     barcode=c1.text_input('Scan or enter barcode / UPC',key=f'v24_lookup_barcode_{key_prefix}',placeholder='Click here, then scan with USB/Bluetooth scanner or type manually')
-    lookup_clicked=c2.button('Lookup barcode')
+    lookup_clicked=c2.button('Lookup barcode',key=f'v24_lookup_button_{key_prefix}')
     if lookup_clicked:
         code=normalize_barcode(barcode)
         if not code:
