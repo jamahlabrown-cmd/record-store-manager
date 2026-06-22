@@ -4,10 +4,11 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
+import requests
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V23.1 FORM VISIBILITY FIX'
+APP_VERSION='V25 HOUSE OF WAX RELEASE DATABASE'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -88,6 +89,77 @@ def setup():
     cur.execute("""CREATE TABLE IF NOT EXISTS content_series(id INTEGER PRIMARY KEY AUTOINCREMENT,series_name TEXT,description TEXT,audience TEXT,tone TEXT,default_format TEXT,active TEXT DEFAULT 'Yes',created_at TEXT)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS content_campaigns(id INTEGER PRIMARY KEY AUTOINCREMENT,campaign_name TEXT,theme TEXT,goal TEXT,start_date TEXT,end_date TEXT,target_audience TEXT,status TEXT DEFAULT 'Planning',notes TEXT,created_at TEXT)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS content_repurposing(id INTEGER PRIMARY KEY AUTOINCREMENT,post_id INTEGER,series_name TEXT,short_caption TEXT,reel_script TEXT,newsletter_blurb TEXT,marketplace_callout TEXT,created_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS barcode_lookup_cache(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        barcode TEXT,
+        source TEXT,
+        external_id TEXT,
+        artist TEXT,
+        title TEXT,
+        format TEXT,
+        label TEXT,
+        release_year TEXT,
+        country TEXT,
+        genre TEXT,
+        style TEXT,
+        catalog_number TEXT,
+        image_url TEXT,
+        external_url TEXT,
+        raw_summary TEXT,
+        created_at TEXT
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS listing_media_policy(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT,
+        default_image_source TEXT,
+        seller_photo_recommended TEXT,
+        notes TEXT
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS how_releases(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        barcode TEXT,
+        artist TEXT,
+        title TEXT,
+        format TEXT,
+        label TEXT,
+        release_year TEXT,
+        country TEXT,
+        genre TEXT,
+        style TEXT,
+        catalog_number TEXT,
+        image_url TEXT,
+        external_release_url TEXT,
+        discogs_id TEXT,
+        musicbrainz_id TEXT,
+        gs1_status TEXT,
+        source_confidence INTEGER DEFAULT 50,
+        verification_status TEXT DEFAULT 'Unverified',
+        admin_notes TEXT,
+        seller_correction_notes TEXT,
+        created_at TEXT,
+        updated_at TEXT
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS how_release_sources(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        release_id INTEGER,
+        source_name TEXT,
+        source_external_id TEXT,
+        source_url TEXT,
+        source_confidence INTEGER DEFAULT 50,
+        raw_summary TEXT,
+        created_at TEXT
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS how_release_corrections(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        release_id INTEGER,
+        seller_id INTEGER,
+        field_name TEXT,
+        old_value TEXT,
+        suggested_value TEXT,
+        correction_note TEXT,
+        status TEXT DEFAULT 'Pending',
+        created_at TEXT
+    )""")
     c.commit(); c.close()
     mig={'buyers':{'state':'TEXT','bio':'TEXT','status':'TEXT','rating':'REAL','completed_purchases':'INTEGER','unpaid_orders':'INTEGER'},'sellers':{'state':'TEXT','website':'TEXT','instagram':'TEXT','seller_story':'TEXT','specialties':'TEXT','logo_url':'TEXT','banner_url':'TEXT','status':'TEXT','seller_level':'TEXT','rating':'REAL','completed_sales':'INTEGER','auction_override':'TEXT','access_code':'TEXT'},'products':{'sku':'TEXT','barcode':'TEXT','catalog_number':'TEXT','matrix_runout':'TEXT','label':'TEXT','release_year':'TEXT','video_url':'TEXT','audio_url':'TEXT','external_release_url':'TEXT','listing_status':'TEXT','listing_type':'TEXT'},'feedback':{'public':'TEXT'}}
     for t,cols in mig.items():
@@ -1021,18 +1093,439 @@ def buyer_dashboard():
             oid=st.selectbox('Completed order',orders['id'].tolist()); o=orders[orders['id']==oid].iloc[0]; rating=st.slider('Seller rating',1,5,5); comment=st.text_area('Public seller feedback')
             if st.button('Submit public seller feedback'): run("INSERT INTO feedback(order_id,reviewer_type,reviewer_id,reviewee_type,reviewee_id,rating,comment,public,created_at) VALUES(?,'Buyer',?,'Seller',?,?,?,'Yes',?)",(int(oid),bid,int(o['seller_id']),int(rating),comment,now())); update_rating('Seller',int(o['seller_id'])); st.success('Feedback posted.')
     with tabs[5]: buyer_profile_public(bid)
+
+# ---------- V24 Barcode Lookup + Auto-Fill ----------
+MUSIC_CATEGORIES=['Vinyl Records','CDs','Cassettes']
+NON_MUSIC_PHOTO_REQUIRED=['Clothing','Music Memorabilia','Culture Goods','House Of Wax Merch','Official Drops','Slipmats & Accessories']
+
+def is_music_category(category):
+    return safe(category) in MUSIC_CATEGORIES
+
+def normalize_barcode(code):
+    return re.sub(r'[^0-9A-Za-z]', '', safe(code))
+
+def seed_listing_media_policy():
+    policies=[
+        ('Vinyl Records','Barcode/Release image','Optional','Use release cover art from barcode/database lookup by default. Seller may upload actual item photos for condition proof.'),
+        ('CDs','Barcode/Release image','Optional','Use release cover art from barcode/database lookup by default. Seller may upload actual item photos.'),
+        ('Cassettes','Barcode/Release image','Optional','Use release cover art from barcode/database lookup by default. Seller may upload actual item photos.'),
+        ('Clothing','Seller photo','Yes','Seller should upload or enter a real photo of the exact item.'),
+        ('Music Memorabilia','Seller photo','Yes','Seller should upload or enter a real photo of the exact item.'),
+        ('Culture Goods','Seller photo','Yes','Seller should upload or enter a real photo of the exact item.'),
+        ('House Of Wax Merch','Seller or official product image','Yes','Use official product image if standardized; otherwise upload exact item/photo.'),
+        ('Official Drops','Seller or official product image','Yes','Use official drop image or seller photo.'),
+        ('Slipmats & Accessories','Seller or official product image','Yes','Use official/accessory image or seller photo.')
+    ]
+    for p in policies:
+        exists=df("SELECT id FROM listing_media_policy WHERE category=?",(p[0],))
+        if exists.empty:
+            run("INSERT INTO listing_media_policy(category,default_image_source,seller_photo_recommended,notes) VALUES(?,?,?,?)",p)
+
+def cache_lookup_result(barcode, result):
+    run("""INSERT INTO barcode_lookup_cache(barcode,source,external_id,artist,title,format,label,release_year,country,genre,style,catalog_number,image_url,external_url,raw_summary,created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (barcode, safe(result.get('source')), safe(result.get('external_id')), safe(result.get('artist')), safe(result.get('title')),
+         safe(result.get('format')), safe(result.get('label')), safe(result.get('release_year')), safe(result.get('country')),
+         safe(result.get('genre')), safe(result.get('style')), safe(result.get('catalog_number')), safe(result.get('image_url')),
+         safe(result.get('external_url')), safe(result.get('raw_summary')), now()))
+
+def lookup_musicbrainz_barcode(barcode):
+    barcode=normalize_barcode(barcode)
+    if not barcode:
+        return []
+    try:
+        url='https://musicbrainz.org/ws/2/release/'
+        params={'query':f'barcode:{barcode}','fmt':'json','limit':5}
+        headers={'User-Agent':'HouseOfWaxPrototype/1.0 (prototype lookup)'}
+        r=requests.get(url,params=params,headers=headers,timeout=8)
+        if r.status_code!=200:
+            return []
+        data=r.json()
+        results=[]
+        for rel in data.get('releases',[])[:5]:
+            artist=''
+            credits=rel.get('artist-credit') or []
+            if credits:
+                parts=[]
+                for c in credits:
+                    if isinstance(c,dict):
+                        if 'artist' in c and isinstance(c['artist'],dict):
+                            parts.append(c['artist'].get('name',''))
+                        elif 'name' in c:
+                            parts.append(c.get('name',''))
+                artist=' '.join([p for p in parts if p]).strip()
+            label=''
+            cat=''
+            infos=rel.get('label-info') or []
+            if infos:
+                first=infos[0] or {}
+                label=(first.get('label') or {}).get('name','') if isinstance(first.get('label'),dict) else ''
+                cat=first.get('catalog-number','')
+            fmt=''
+            media=rel.get('media') or []
+            if media:
+                fmt=media[0].get('format','')
+            year=safe(rel.get('date'))[:4]
+            rid=safe(rel.get('id'))
+            cover=f'https://coverartarchive.org/release/{rid}/front-500' if rid else ''
+            ext=f'https://musicbrainz.org/release/{rid}' if rid else ''
+            results.append({
+                'source':'MusicBrainz','external_id':rid,'artist':artist,'title':safe(rel.get('title')),
+                'format':fmt,'label':label,'release_year':year,'country':safe(rel.get('country')),
+                'genre':'','style':'','catalog_number':cat,'image_url':cover,'external_url':ext,
+                'raw_summary':f"MusicBrainz release match for barcode {barcode}"
+            })
+        return results
+    except Exception:
+        return []
+
+def lookup_discogs_barcode(barcode):
+    barcode=normalize_barcode(barcode)
+    if not barcode:
+        return []
+    token=''
+    try:
+        token=st.secrets.get('DISCOGS_TOKEN','')
+    except Exception:
+        token=''
+    if not token:
+        return []
+    try:
+        url='https://api.discogs.com/database/search'
+        params={'barcode':barcode,'type':'release','token':token,'per_page':5}
+        headers={'User-Agent':'HouseOfWaxPrototype/1.0'}
+        r=requests.get(url,params=params,headers=headers,timeout=8)
+        if r.status_code!=200:
+            return []
+        data=r.json()
+        results=[]
+        for item in data.get('results',[])[:5]:
+            title=safe(item.get('title'))
+            artist=''
+            album=title
+            if ' - ' in title:
+                artist,album=title.split(' - ',1)
+            formats=item.get('format') or []
+            labels=item.get('label') or []
+            genres=item.get('genre') or []
+            styles=item.get('style') or []
+            rid=safe(item.get('id'))
+            results.append({
+                'source':'Discogs','external_id':rid,'artist':artist,'title':album,
+                'format':', '.join(formats) if isinstance(formats,list) else safe(formats),
+                'label':', '.join(labels) if isinstance(labels,list) else safe(labels),
+                'release_year':safe(item.get('year')),'country':safe(item.get('country')),
+                'genre':', '.join(genres) if isinstance(genres,list) else safe(genres),
+                'style':', '.join(styles) if isinstance(styles,list) else safe(styles),
+                'catalog_number':'','image_url':safe(item.get('cover_image')) or safe(item.get('thumb')),
+                'external_url':f'https://www.discogs.com/release/{rid}' if rid else '',
+                'raw_summary':f"Discogs release match for barcode {barcode}"
+            })
+        return results
+    except Exception:
+        return []
+
+def lookup_barcode(barcode):
+    barcode=normalize_barcode(barcode)
+    if not barcode:
+        return []
+    # First check House Of Wax internal verified/release database.
+    internal=get_best_how_release(barcode)
+    if internal:
+        return [how_release_to_autofill(internal)]
+    cached=df("SELECT * FROM barcode_lookup_cache WHERE barcode=? ORDER BY id DESC LIMIT 10",(barcode,))
+    results=[]
+    if not cached.empty:
+        for _,r in cached.iterrows():
+            res={k:r.get(k,'') for k in ['source','external_id','artist','title','format','label','release_year','country','genre','style','catalog_number','image_url','external_url','raw_summary']}
+            results.append(res)
+            try:
+                create_or_update_how_release(barcode,res)
+            except Exception:
+                pass
+        return results
+    results=lookup_discogs_barcode(barcode)
+    if not results:
+        results=lookup_musicbrainz_barcode(barcode)
+    for res in results:
+        try:
+            cache_lookup_result(barcode,res)
+            create_or_update_how_release(barcode,res)
+        except Exception:
+            pass
+    return results
+
+def render_barcode_lookup_widget():
+    seed_listing_media_policy()
+    st.markdown('### Barcode / UPC lookup')
+    st.write('For records, CDs, and cassettes, scan or type the barcode. House Of Wax checks its own release database first, then outside sources for release information and cover art. For shirts, dolls, memorabilia, merch, and accessories, sellers should use a photo of the exact item or an official product image.')
+    c1,c2=st.columns([2,1])
+    barcode=c1.text_input('Scan or enter barcode / UPC',key='v24_lookup_barcode',placeholder='Click here, then scan with USB/Bluetooth scanner or type manually')
+    lookup_clicked=c2.button('Lookup barcode')
+    if lookup_clicked:
+        code=normalize_barcode(barcode)
+        if not code:
+            st.error('Enter or scan a barcode first.')
+        else:
+            with st.spinner('Looking up barcode...'):
+                matches=lookup_barcode(code)
+            if matches:
+                st.session_state['v24_barcode_matches']=matches
+                st.session_state['v24_lookup_barcode_clean']=code
+                st.success(f'Found {len(matches)} possible match(es). Choose one below to auto-fill the listing draft.')
+            else:
+                st.warning('No lookup match found yet. You can still enter the product manually. For Discogs lookup, add a DISCOGS_TOKEN in Streamlit secrets.')
+
+    matches=st.session_state.get('v24_barcode_matches',[])
+    if matches:
+        labels=[f"{i+1}. {safe(m.get('artist'))} - {safe(m.get('title'))} ({safe(m.get('source'))}, {safe(m.get('release_year'))})" for i,m in enumerate(matches)]
+        pick=st.selectbox('Possible barcode matches',labels,key='v24_match_select')
+        idx=int(pick.split('.',1)[0])-1
+        selected=matches[idx]
+        colA,colB=st.columns([1,2])
+        with colA:
+            if safe(selected.get('image_url')):
+                st.image(safe(selected.get('image_url')),use_container_width=True)
+            else:
+                st.info('No image returned.')
+        with colB:
+            st.write(f"**Artist:** {safe(selected.get('artist'))}")
+            st.write(f"**Title:** {safe(selected.get('title'))}")
+            st.write(f"**Format:** {safe(selected.get('format'))}")
+            st.write(f"**Label:** {safe(selected.get('label'))}")
+            st.write(f"**Year:** {safe(selected.get('release_year'))}")
+            st.write(f"**Source:** {safe(selected.get('source'))}")
+            if safe(selected.get('external_url')):
+                st.write(f"External release URL: {safe(selected.get('external_url'))}")
+        if st.button('Use this match to auto-fill listing draft'):
+            st.session_state['v24_autofill_listing']=selected
+            st.session_state['v24_autofill_barcode']=st.session_state.get('v24_lookup_barcode_clean',normalize_barcode(barcode))
+            try:
+                rid=create_or_update_how_release(st.session_state['v24_autofill_barcode'],selected)
+                st.session_state['v25_release_id']=rid
+            except Exception:
+                pass
+            st.success('Listing draft filled and saved to the House Of Wax release database. Scroll to the Add Product form and review before saving.')
+
+def v24_listing_defaults():
+    selected=st.session_state.get('v24_autofill_listing',{})
+    barcode=st.session_state.get('v24_autofill_barcode','')
+    return {
+        'barcode':barcode,
+        'artist':safe(selected.get('artist')),
+        'title':safe(selected.get('title')),
+        'format':safe(selected.get('format')),
+        'label':safe(selected.get('label')),
+        'release_year':safe(selected.get('release_year')),
+        'genre':safe(selected.get('genre')) or safe(selected.get('style')),
+        'catalog_number':safe(selected.get('catalog_number')),
+        'image_url':safe(selected.get('image_url')),
+        'external_url':safe(selected.get('external_url')),
+    }
+
+
+
+# ---------- V25 House Of Wax Release Database ----------
+def gs1_basic_validation(barcode):
+    code=normalize_barcode(barcode)
+    if not code or not code.isdigit():
+        return 'Not checked'
+    if len(code) in [8,12,13,14]:
+        return 'Valid format'
+    return 'Invalid length'
+
+def release_confidence_from_result(result):
+    score=40
+    if safe(result.get('source'))=='Discogs':
+        score+=25
+    if safe(result.get('source'))=='MusicBrainz':
+        score+=15
+    for field in ['artist','title','format','label','release_year','image_url','external_url']:
+        if safe(result.get(field)):
+            score+=5
+    return min(score,100)
+
+def find_how_release_by_barcode(barcode):
+    code=normalize_barcode(barcode)
+    if not code:
+        return pd.DataFrame()
+    return df("SELECT * FROM how_releases WHERE barcode=? ORDER BY source_confidence DESC, id DESC",(code,))
+
+def create_or_update_how_release(barcode, result, seller_note=''):
+    code=normalize_barcode(barcode)
+    if not code:
+        return None
+    source=safe(result.get('source'))
+    ext_id=safe(result.get('external_id'))
+    discogs_id=ext_id if source=='Discogs' else ''
+    mb_id=ext_id if source=='MusicBrainz' else ''
+    confidence=release_confidence_from_result(result)
+    existing=find_how_release_by_barcode(code)
+    if not existing.empty:
+        rid=int(existing.iloc[0]['id'])
+        # Update only if current result has stronger confidence or fills empty fields.
+        current=int(existing.iloc[0].get('source_confidence') or 0)
+        if confidence >= current:
+            run("""UPDATE how_releases SET artist=?,title=?,format=?,label=?,release_year=?,country=?,genre=?,style=?,catalog_number=?,image_url=?,external_release_url=?,discogs_id=COALESCE(NULLIF(?,''),discogs_id),musicbrainz_id=COALESCE(NULLIF(?,''),musicbrainz_id),gs1_status=?,source_confidence=?,seller_correction_notes=?,updated_at=? WHERE id=?""",
+                (safe(result.get('artist')),safe(result.get('title')),safe(result.get('format')),safe(result.get('label')),safe(result.get('release_year')),safe(result.get('country')),safe(result.get('genre')),safe(result.get('style')),safe(result.get('catalog_number')),safe(result.get('image_url')),safe(result.get('external_url')),discogs_id,mb_id,gs1_basic_validation(code),confidence,seller_note,now(),rid))
+    else:
+        run("""INSERT INTO how_releases(barcode,artist,title,format,label,release_year,country,genre,style,catalog_number,image_url,external_release_url,discogs_id,musicbrainz_id,gs1_status,source_confidence,verification_status,admin_notes,seller_correction_notes,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (code,safe(result.get('artist')),safe(result.get('title')),safe(result.get('format')),safe(result.get('label')),safe(result.get('release_year')),safe(result.get('country')),safe(result.get('genre')),safe(result.get('style')),safe(result.get('catalog_number')),safe(result.get('image_url')),safe(result.get('external_url')),discogs_id,mb_id,gs1_basic_validation(code),confidence,'Unverified','',seller_note,now(),now()))
+        rid=int(df("SELECT id FROM how_releases WHERE barcode=? ORDER BY id DESC LIMIT 1",(code,)).iloc[0]['id'])
+    # Add source row if not already present
+    if source:
+        exists=df("SELECT id FROM how_release_sources WHERE release_id=? AND source_name=? AND source_external_id=?",(rid,source,ext_id))
+        if exists.empty:
+            run("""INSERT INTO how_release_sources(release_id,source_name,source_external_id,source_url,source_confidence,raw_summary,created_at) VALUES(?,?,?,?,?,?,?)""",
+                (rid,source,ext_id,safe(result.get('external_url')),confidence,safe(result.get('raw_summary')),now()))
+    return rid
+
+def get_best_how_release(barcode):
+    code=normalize_barcode(barcode)
+    if not code:
+        return None
+    r=df("SELECT * FROM how_releases WHERE barcode=? ORDER BY CASE verification_status WHEN 'Approved' THEN 1 WHEN 'Needs Review' THEN 2 ELSE 3 END, source_confidence DESC, id DESC LIMIT 1",(code,))
+    if r.empty:
+        return None
+    return r.iloc[0].to_dict()
+
+def how_release_to_autofill(release):
+    if not release:
+        return {}
+    return {
+        'source':'House Of Wax',
+        'external_id':safe(release.get('id')),
+        'artist':safe(release.get('artist')),
+        'title':safe(release.get('title')),
+        'format':safe(release.get('format')),
+        'label':safe(release.get('label')),
+        'release_year':safe(release.get('release_year')),
+        'country':safe(release.get('country')),
+        'genre':safe(release.get('genre')),
+        'style':safe(release.get('style')),
+        'catalog_number':safe(release.get('catalog_number')),
+        'image_url':safe(release.get('image_url')),
+        'external_url':safe(release.get('external_release_url')),
+        'raw_summary':'House Of Wax internal release database match'
+    }
+
+def submit_release_correction(release_id, seller_id, field_name, old_value, suggested_value, note):
+    run("""INSERT INTO how_release_corrections(release_id,seller_id,field_name,old_value,suggested_value,correction_note,status,created_at) VALUES(?,?,?,?,?,?,?,?)""",
+        (release_id,seller_id,field_name,old_value,suggested_value,note,'Pending',now()))
+
+def release_database_admin():
+    st.subheader('House Of Wax Release Database')
+    st.write('This is the internal House Of Wax reference library built from barcode scans, Discogs/MusicBrainz results, seller corrections, and admin approval.')
+    q=st.text_input('Search release database',placeholder='barcode, artist, title, label, catalog number')
+    where=''
+    params=()
+    if q:
+        like=f"%{q}%"
+        where="WHERE barcode LIKE ? OR artist LIKE ? OR title LIKE ? OR label LIKE ? OR catalog_number LIKE ?"
+        params=(like,like,like,like,like)
+    releases=df(f"SELECT * FROM how_releases {where} ORDER BY id DESC LIMIT 200",params)
+    st.dataframe(releases,use_container_width=True)
+    if not releases.empty:
+        labels=[f"{int(r.id)} - {safe(r.artist)} - {safe(r.title)} [{safe(r.barcode)}]" for _,r in releases.iterrows()]
+        pick=st.selectbox('Review release',labels,key='v25_release_admin_pick')
+        rid=int(pick.split(' - ')[0])
+        row=df("SELECT * FROM how_releases WHERE id=?",(rid,)).iloc[0]
+        with st.form('release_review_form'):
+            c1,c2=st.columns(2)
+            artist=c1.text_input('Artist',value=safe(row.get('artist')))
+            title=c2.text_input('Title',value=safe(row.get('title')))
+            c3,c4,c5=st.columns(3)
+            fmt=c3.text_input('Format',value=safe(row.get('format')))
+            label=c4.text_input('Label',value=safe(row.get('label')))
+            year=c5.text_input('Release year',value=safe(row.get('release_year')))
+            c6,c7,c8=st.columns(3)
+            genre=c6.text_input('Genre',value=safe(row.get('genre')))
+            cat=c7.text_input('Catalog number',value=safe(row.get('catalog_number')))
+            confidence=c8.number_input('Confidence',min_value=0,max_value=100,value=int(row.get('source_confidence') or 50))
+            image=st.text_input('Image URL',value=safe(row.get('image_url')))
+            external=st.text_input('External release URL',value=safe(row.get('external_release_url')))
+            status=st.selectbox('Verification status',['Unverified','Needs Review','Approved','Rejected'],index=['Unverified','Needs Review','Approved','Rejected'].index(safe(row.get('verification_status'),'Unverified') if safe(row.get('verification_status')) in ['Unverified','Needs Review','Approved','Rejected'] else 'Unverified'))
+            notes=st.text_area('Admin notes',value=safe(row.get('admin_notes')))
+            save=st.form_submit_button('Save release review')
+            if save:
+                run("""UPDATE how_releases SET artist=?,title=?,format=?,label=?,release_year=?,genre=?,catalog_number=?,source_confidence=?,image_url=?,external_release_url=?,verification_status=?,admin_notes=?,updated_at=? WHERE id=?""",
+                    (artist,title,fmt,label,year,genre,cat,int(confidence),image,external,status,notes,now(),rid))
+                st.success('Release review saved.')
+        sources=df("SELECT * FROM how_release_sources WHERE release_id=? ORDER BY id DESC",(rid,))
+        corrections=df("SELECT * FROM how_release_corrections WHERE release_id=? ORDER BY id DESC",(rid,))
+        st.markdown('### Sources')
+        st.dataframe(sources,use_container_width=True)
+        st.markdown('### Seller corrections')
+        st.dataframe(corrections,use_container_width=True)
+
+
 def upload_product(sid,key):
+    defaults=v24_listing_defaults()
+    st.markdown('### Add / upload product')
+    st.write('Use the barcode lookup first for records, CDs, and cassettes. Then review these fields before saving.')
     with st.form(key):
-        c1,c2,c3=st.columns(3); sku=c1.text_input('SKU'); barcode=c2.text_input('Barcode / UPC / EAN'); catalog=c3.text_input('Catalog number'); matrix=st.text_input('Matrix / runout')
-        c4,c5,c6=st.columns(3); category=c4.selectbox('Category',['Vinyl Records','CDs','Cassettes','Clothing','Music Memorabilia','Culture Goods','House Of Wax Merch','Official Drops','Slipmats & Accessories']); artist=c5.text_input('Artist / Brand'); title=c6.text_input('Title / Product')
-        c7,c8,c9=st.columns(3); fmt=c7.text_input('Format',value='Vinyl'); label=c8.text_input('Label / Brand'); year=c9.text_input('Release year')
-        genre=st.text_input('Genre / style'); mg=st.selectbox('Media/product grade',['Mint','Near Mint','VG+','VG','Good','Used','New','N/A']); sg=st.selectbox('Sleeve/packaging grade',['Mint','Near Mint','VG+','VG','Good','Used','New','N/A']); notes=st.text_area('Condition notes'); desc=st.text_area('Description')
-        c10,c11,c12=st.columns(3); price=c10.number_input('Price',min_value=0.0,step=.01); qty=c11.number_input('Quantity',min_value=1,value=1); ship=c12.number_input('Shipping price',min_value=0.0,step=.01)
-        img=st.file_uploader('Product image',type=['png','jpg','jpeg','webp']); imgurl=st.text_input('Or image URL'); sub=st.form_submit_button('Upload product')
+        c1,c2,c3=st.columns(3)
+        sku=c1.text_input('SKU')
+        barcode=c2.text_input('Barcode / UPC / EAN',value=defaults.get('barcode',''))
+        catalog=c3.text_input('Catalog number',value=defaults.get('catalog_number',''))
+        matrix=st.text_input('Matrix / runout')
+
+        c4,c5,c6=st.columns(3)
+        category=c4.selectbox('Category',['Vinyl Records','CDs','Cassettes','Clothing','Music Memorabilia','Culture Goods','House Of Wax Merch','Official Drops','Slipmats & Accessories'])
+        artist=c5.text_input('Artist / Brand',value=defaults.get('artist',''))
+        title=c6.text_input('Title / Product',value=defaults.get('title',''))
+
+        c7,c8,c9=st.columns(3)
+        fmt_default=defaults.get('format','') or ('Vinyl' if category=='Vinyl Records' else '')
+        fmt=c7.text_input('Format',value=fmt_default)
+        label=c8.text_input('Label / Brand',value=defaults.get('label',''))
+        year=c9.text_input('Release year',value=defaults.get('release_year',''))
+
+        genre=st.text_input('Genre / style',value=defaults.get('genre',''))
+        mg=st.selectbox('Media/product grade',['Mint','Near Mint','VG+','VG','Good','Used','New','N/A'])
+        sg=st.selectbox('Sleeve/packaging grade',['Mint','Near Mint','VG+','VG','Good','Used','New','N/A'])
+        notes=st.text_area('Condition notes')
+        desc=st.text_area('Description')
+
+        c10,c11,c12=st.columns(3)
+        price=c10.number_input('Price',min_value=0.0,step=.01)
+        qty=c11.number_input('Quantity',min_value=1,value=1)
+        ship=c12.number_input('Shipping price',min_value=0.0,step=.01)
+
+        st.markdown('### Product image')
+        if is_music_category(category):
+            st.info('Music item: the barcode/release image is used by default when available. You can still upload an actual item photo if you want condition proof.')
+        else:
+            st.warning('Non-music item: upload or enter a real/official image for this exact item.')
+        img=st.file_uploader('Optional seller photo / exact item image',type=['png','jpg','jpeg','webp'])
+        imgurl=st.text_input('Image URL',value=defaults.get('image_url',''))
+        external_release_url=st.text_input('External release URL',value=defaults.get('external_url',''))
+        sub=st.form_submit_button('Upload product')
+    release_id=st.session_state.get('v25_release_id')
+    if release_id:
+        with st.expander('Suggest a correction to the House Of Wax release database'):
+            st.write('If the auto-filled release data is wrong or incomplete, suggest a correction. Admin can review it later.')
+            field_name=st.selectbox('Field to correct',['artist','title','format','label','release_year','genre','catalog_number','image_url','external_release_url'],key=f'corr_field_{key}')
+            suggested=st.text_input('Suggested value',key=f'corr_value_{key}')
+            note=st.text_area('Correction note',key=f'corr_note_{key}')
+            if st.button('Submit correction',key=f'corr_submit_{key}'):
+                old_val=defaults.get(field_name,'')
+                submit_release_correction(int(release_id),sid,field_name,old_val,suggested,note)
+                st.success('Correction submitted for review.')
     if sub:
-        image=save_file(img,'product_images') or imgurl; description=desc or f'{artist} — {title}. {notes}'
-        run('''INSERT INTO products(seller_id,sku,barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,video_url,audio_url,external_release_url,listing_status,listing_type,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(sid,sku,barcode,catalog,matrix,category,artist,title,fmt,label,year,genre,mg,sg,notes,description,float(price),int(qty),float(ship),image,'','','','Active','Fixed Price',now(),now()))
-        st.success('Product uploaded and public.')
+        saved_image=save_file(img,'product_images')
+        image=saved_image or imgurl
+        description=desc or f'{artist} — {title}. {notes}'
+        run("""INSERT INTO products(seller_id,sku,barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,video_url,audio_url,external_release_url,listing_status,listing_type,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(sid,sku,barcode,catalog,matrix,category,artist,title,fmt,label,year,genre,mg,sg,notes,description,float(price),int(qty),float(ship),image,'','',external_release_url,'Active','Fixed Price',now(),now()))
+        if is_music_category(category) and imgurl and not saved_image:
+            st.success('Product uploaded using barcode/release image.')
+        elif not is_music_category(category) and not image:
+            st.warning('Product uploaded, but this non-music item should have an exact item or official product image before going public.')
+        else:
+            st.success('Product uploaded and public.')
+
+
 def seller_dashboard():
     header(); st.header('Seller dashboard')
     mode=st.radio('Open seller by',['Choose existing seller','Email + access code'],horizontal=True)
@@ -1050,14 +1543,14 @@ def seller_dashboard():
         with st.form('policy'):
             shipping=st.text_area('Shipping policy',value=safe(pol.get('shipping_policy') if len(pol) else 'Ships within 3 business days.')); returns=st.text_area('Return policy',value=safe(pol.get('return_policy') if len(pol) else 'No buyer remorse returns unless seller approves.')); grading=st.text_area('Grading policy',value=safe(pol.get('grading_policy') if len(pol) else 'Collector grading standards.')); sub=st.form_submit_button('Save policies')
         if sub: run('INSERT OR REPLACE INTO seller_policies(seller_id,shipping_policy,return_policy,grading_policy) VALUES(?,?,?,?)',(sid,shipping,returns,grading)); st.success('Policies saved.')
-    with tabs[2]: upload_product(sid,'normal_upload')
+    with tabs[2]:
+        render_barcode_lookup_widget()
+        upload_product(sid,'normal_upload')
     with tabs[3]:
-        st.subheader('Barcode scanner / inventory quick add'); st.info('Click the barcode field and scan with USB/Bluetooth scanner, phone keyboard scanner, or type/paste barcode.')
-        code=st.text_input('Scan or enter barcode / UPC / EAN'); known=barcode_lookup(code)
-        if known: st.success('Known barcode found; details shown below.'); st.json(known)
-        with st.form('barcodeadd'):
-            barcode=st.text_input('Barcode',value=code); catalog=st.text_input('Catalog number',value=safe(known.get('catalog_number'))); matrix=st.text_input('Matrix / runout'); artist=st.text_input('Artist / Brand',value=safe(known.get('artist'))); title=st.text_input('Title / Product',value=safe(known.get('title'))); fmt=st.text_input('Format',value=safe(known.get('format'),'Vinyl')); label=st.text_input('Label',value=safe(known.get('label'))); year=st.text_input('Release year',value=safe(known.get('release_year'))); genre=st.text_input('Genre',value=safe(known.get('genre'))); price=st.number_input('Price',min_value=0.0,step=.01); qty=st.number_input('Quantity',min_value=1,value=1); img=st.file_uploader('Image',type=['png','jpg','jpeg','webp']); sub=st.form_submit_button('Add scanned item to inventory')
-        if sub: run('''INSERT INTO products(seller_id,sku,barcode,catalog_number,matrix_runout,category,artist,title,format,label,release_year,genre,media_grade,sleeve_grade,condition_notes,description,price,quantity,shipping_price,image_url,video_url,audio_url,external_release_url,listing_status,listing_type,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(sid,'',barcode,catalog,matrix,'Vinyl Records',artist,title,fmt,label,year,genre,'N/A','N/A','',f'{artist} — {title}. Barcode {barcode}.',float(price),int(qty),0,save_file(img,'product_images'),'','','','Active','Fixed Price',now(),now())); st.success('Scanned item added.')
+        st.subheader('Barcode scanner / inventory quick add')
+        st.info('Click into the barcode field and scan with a USB/Bluetooth scanner, phone keyboard scanner, or type/paste the barcode.')
+        render_barcode_lookup_widget()
+        upload_product(sid,'barcode_quick_add')
     with tabs[4]:
         csv=st.file_uploader('Upload CSV',type=['csv']); st.caption('Supports barcode,catalog_number,matrix_runout,artist,title,format,label,release_year,genre,price,quantity,image_url')
         if csv is not None:
@@ -1264,7 +1757,7 @@ def my_house_of_wax():
 
     workspace_options=['Buyer Account','Seller Tools']
     if testing_mode:
-        workspace_options += ['Content Admin','Admin','Test Setup','Auctions','Seller Stores','Launch Checklist']
+        workspace_options += ['Content Admin','Admin','Test Setup','Auctions','Seller Stores','Release Database','Launch Checklist']
     else:
         workspace_options += ['Content Admin']
     section=st.radio('Choose your workspace',workspace_options)
@@ -1283,6 +1776,8 @@ def my_house_of_wax():
         auctions()
     elif section=='Seller Stores':
         seller_stores()
+    elif section=='Release Database':
+        release_database_admin()
     elif section=='Launch Checklist':
         launch_checklist()
 
