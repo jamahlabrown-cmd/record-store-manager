@@ -1,21 +1,22 @@
-# House Of Wax V25.2 Barcode Widget ID Fix
+# House Of Wax V25.3 Missing Import Fix
 
 You should see:
 
-`Running V25.2 BARCODE WIDGET ID FIX`
+`Running V25.3 MISSING IMPORT FIX`
 
 ## Fixed
 
-This fixes the remaining StreamlitDuplicateElementId issue in the barcode lookup widget.
+This fixes the NameError crash:
 
-The previous fix gave the barcode text field a unique key, but the `Lookup barcode` button also needed a unique key.
+`NameError: name 're' is not defined`
 
-## What changed
+The barcode cleanup function uses `re.sub()`, so the app needed `import re`.
 
-- Barcode text input uses unique keys
-- Lookup barcode button uses unique keys
-- Possible match selector uses unique keys
-- Use Match button uses unique keys
-- Upload Product and Barcode Scanner tabs can both show barcode lookup without crashing
+## Keeps
 
-All V25 House Of Wax Release Database features remain.
+- V25 Release Database
+- V25.2 barcode widget unique key fixes
+- MusicBrainz lookup
+- Discogs token support
+- House Of Wax release database admin
+- Seller release correction system

@@ -1,6 +1,7 @@
 
 # ROOT APP DEPLOY FIX — upload THIS app.py to the repository root, replacing the old root app.py.
 import sqlite3
+import re
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
@@ -8,7 +9,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25.2 BARCODE WIDGET ID FIX'
+APP_VERSION='V25.3 MISSING IMPORT FIX'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:

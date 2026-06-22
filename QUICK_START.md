@@ -1,4 +1,4 @@
-# Quick Start V25.2
+# Quick Start V25.3
 
 Upload:
 
@@ -10,12 +10,12 @@ Reboot Streamlit.
 
 Confirm:
 
-`Running V25.2 BARCODE WIDGET ID FIX`
+`Running V25.3 MISSING IMPORT FIX`
 
 Test:
 1. My House of Wax
 2. Seller Tools
 3. Upload Product
 4. Barcode Scanner
-
-Both tabs should open without Streamlit duplicate key/id errors.
+5. Type or scan a barcode
+6. Click Lookup barcode
