@@ -1,15 +1,22 @@
-# Quick Start V16.3
+# Quick Start V19
 
-1. Download the direct `app.py` file.
-2. In GitHub, open the repository root.
-3. Click the existing `app.py`.
-4. Click the pencil/edit button.
-5. Select all old code.
-6. Delete it.
-7. Paste the new `app.py` code.
-8. Commit changes.
-9. Reboot Streamlit.
+Upload:
 
-Confirm the top says:
+- app.py
+- requirements.txt
+- runtime.txt
 
-`Running V16.3 ROOT APP DEPLOY FIX`
+Then reboot Streamlit.
+
+Confirm:
+
+`Running V19 NAV CLEANUP + OFFICIAL SELLER`
+
+Then test:
+
+1. Home
+2. Marketplace
+3. Knowledge Hub
+4. Sell on House Of Wax
+5. Admin > Create/repair House Of Wax Official seller
+6. Seller Dashboard with official@houseofwax.com / official123

@@ -1,36 +1,38 @@
-# House Of Wax V16.3 Root App Deploy Fix
-
-This package fixes the deployment confusion.
-
-The previous traceback proves Streamlit was still running an old root `app.py` that contained:
-
-`app_app_settings`
-
-This V16.3 package contains a clean root `app.py` with:
-
-`app_settings`
-
-and no `app_app_settings`.
+# House Of Wax V19 Navigation Cleanup + Official Seller
 
 You should see:
 
-`Running V16.3 ROOT APP DEPLOY FIX`
+`Running V19 NAV CLEANUP + OFFICIAL SELLER`
 
-## Critical upload instruction
+## What changed
 
-Do not upload the folder as a folder.
+- Removed the separate Music + Culture main tab
+- Folded culture/history/discovery into Knowledge Hub
+- Renamed Register / Sell to Sell on House Of Wax
+- Added House Of Wax Official seller account helper
+- Added Official House Of Wax badge
+- Added House Of Wax merch / official drops categories
+- Marketplace now clearly explains that all available items live there
+- Knowledge Hub now covers education, culture, history, discovery, formats, genres, and trust
 
-Replace the repository root file:
+## New navigation
 
-`app.py`
+- Home
+- Marketplace
+- Knowledge Hub
+- Sell on House Of Wax
+- Buyer Dashboard
+- Seller Dashboard
+- Content Admin
+- Admin
+- Test Setup
+- Auctions
+- Seller Stores
 
-with the new `app.py`.
+## Official seller
 
-Then upload:
+Name: House Of Wax Official  
+Email: official@houseofwax.com  
+Access code: official123
 
-- requirements.txt
-- runtime.txt
-
-Then reboot Streamlit.
-
-If Streamlit still shows the old `app_app_settings` traceback, the root `app.py` was not replaced.
+Use this account for House Of Wax branded merch, official drops, curated goods, and platform items.
