@@ -1,30 +1,23 @@
-# House Of Wax V23 Launch Prep + Public Mode
+# House Of Wax V23.1 Form Visibility Fix
 
 You should see:
 
-`Running V23 LAUNCH PREP + PUBLIC MODE`
+`Running V23.1 FORM VISIBILITY FIX`
+
+## Fixed
+
+This fixes the form/input styling bug where:
+- typed text was hard to see
+- the cursor appeared too far across the line
+- input boxes had poor contrast in the dark theme
 
 ## What changed
 
-- Added Testing mode toggle
-- Cleaned public navigation
-- Added About page
-- Added Trust & Safety page
-- Added Contact / Newsletter page
-- Added Seller Standards content
-- Added Buyer Expectations content
-- Added Launch Checklist inside My House of Wax when Testing mode is on
-- Hid Admin/Test Setup/Auctions/Seller Stores unless Testing mode is on
-- Kept core public pages simple:
-  - Home
-  - Marketplace
-  - Knowledge Hub
-  - Sell on House Of Wax
-  - About
-  - Trust & Safety
-  - Contact / Newsletter
-  - My House of Wax
+- Input text is now dark on a light cream field
+- Cursor is dark and visible
+- Placeholder text is readable
+- Input padding is reset
+- Text indent is reset
+- Select boxes and number inputs are easier to read
 
-## Business documents
-
-Business plan, startup budget, revenue model, and policy drafts are still included in the ZIP.
+This keeps all V23 Launch Prep + Public Mode features.

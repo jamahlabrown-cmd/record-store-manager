@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V23 LAUNCH PREP + PUBLIC MODE'
+APP_VERSION='V23.1 FORM VISIBILITY FIX'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -196,10 +196,13 @@ def apply_brand_style():
     }
 
     .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] > div {
-        background: rgba(251,247,239,.08) !important;
-        border-color: rgba(201,164,92,.22) !important;
-        color: var(--how-cream) !important;
+        background: rgba(251,247,239,.98) !important;
+        border-color: rgba(201,164,92,.55) !important;
+        color: #111111 !important;
+        caret-color: #111111 !important;
         border-radius: 12px !important;
+        padding-left: 0.85rem !important;
+        text-indent: 0 !important;
     }
 
     .how-hero {
@@ -300,6 +303,60 @@ def apply_brand_style():
     hr {
         border-color: rgba(201,164,92,.2) !important;
     }
+
+    /* ---------- V23.1 Form visibility fix ---------- */
+    div[data-baseweb="input"],
+    div[data-baseweb="textarea"],
+    div[data-baseweb="select"] {
+        background: rgba(251,247,239,.96) !important;
+        border: 1px solid rgba(201,164,92,.55) !important;
+        border-radius: 12px !important;
+        box-shadow: none !important;
+    }
+
+    input,
+    textarea,
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea {
+        color: #111111 !important;
+        caret-color: #111111 !important;
+        background: rgba(251,247,239,.98) !important;
+        padding-left: 0.85rem !important;
+        padding-right: 0.85rem !important;
+        text-indent: 0 !important;
+        margin-left: 0 !important;
+        font-weight: 650 !important;
+        letter-spacing: 0 !important;
+    }
+
+    textarea {
+        padding-top: 0.75rem !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: rgba(17,17,17,.55) !important;
+        opacity: 1 !important;
+    }
+
+    div[data-baseweb="select"] span,
+    div[data-baseweb="select"] div {
+        color: #111111 !important;
+    }
+
+    label,
+    [data-testid="stWidgetLabel"] p {
+        color: rgba(246,239,227,.95) !important;
+        font-weight: 800 !important;
+    }
+
+    .stNumberInput input {
+        color: #111111 !important;
+        caret-color: #111111 !important;
+        padding-left: 0.85rem !important;
+        text-indent: 0 !important;
+    }
+
     </style>
     """, unsafe_allow_html=True)
 
