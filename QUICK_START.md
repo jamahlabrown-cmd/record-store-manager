@@ -1,4 +1,4 @@
-# Quick Start V25.10
+# Quick Start V25.11
 
 Upload:
 - app.py
@@ -8,13 +8,14 @@ Upload:
 Reboot Streamlit.
 
 Confirm:
-`Running V25.10 ONE-BUTTON UNIVERSAL SEARCH`
+`Running V25.11 SMART BEST-MATCH SEARCH`
 
 Test:
 1. My House of Wax
 2. Seller Tools
 3. Barcode Scanner or Upload Product
-4. Enter barcode and/or artist/title
-5. Find One-button universal search
-6. Click Search All Sources At Once
-7. If browser blocks tabs, allow pop-ups for the app
+4. Enter Artist: Lady Gaga
+5. Enter Title: The Fame
+6. Click Smart Search: Find Best Match
+7. Review the recommended best match
+8. Click Use recommended match

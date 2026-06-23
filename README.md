@@ -1,33 +1,36 @@
-# House Of Wax V25.10 One-Button Universal Search
+# House Of Wax V25.11 Smart Best-Match Search
 
 You should see:
 
-`Running V25.10 ONE-BUTTON UNIVERSAL SEARCH`
+`Running V25.11 SMART BEST-MATCH SEARCH`
 
 ## What changed
 
-The Universal manual search section is now one main button:
+The search no longer opens multiple browser windows.
 
-`Search All Sources At Once`
+Instead, one button runs the search inside House Of Wax:
 
-One click attempts to open all source searches in new browser tabs:
-- Discogs
-- MusicBrainz
-- Apple/iTunes
-- Google
-- Wikipedia
-- Wikidata
-- Discogs barcode search
-- MusicBrainz barcode search
-- Barcode Lookup
-- UPCitemdb
-- Go-UPC
-- GS1
+`Smart Search: Find Best Match`
 
-## Important browser note
+It checks connected sources, ranks results, and presents one recommended best match inside the app.
 
-Browsers may block multiple tabs/pop-ups on the first click. If only one tab opens, allow pop-ups for the Streamlit app and click again.
+## Sources checked
 
-## Backup
+- House Of Wax internal release database
+- Barcode lookup/cache
+- Discogs automatic search
+- Apple/iTunes album search
+- MusicBrainz search
 
-The individual links are still available in an expander as a backup.
+## What appears after search
+
+- Recommended best match card
+- Cover art if found
+- Artist/title/source/format/year/label
+- Use recommended match button
+- Diagnostics table
+- Backup source links only if needed
+
+## Important
+
+External links are still available, but only as backup. The main flow is now internal search and best-match presentation.

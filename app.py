@@ -11,7 +11,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title='House Of Wax', page_icon='🎧', layout='wide')
-APP_VERSION='V25.10 ONE-BUTTON UNIVERSAL SEARCH'
+APP_VERSION='V25.11 SMART BEST-MATCH SEARCH'
 DB=Path('house_of_wax.db')
 UPLOAD=Path('house_of_wax_uploads'); UPLOAD.mkdir(exist_ok=True)
 try:
@@ -1427,78 +1427,96 @@ def universal_search_urls(artist='', title='', barcode=''):
         ])
     return links
 
+
+def choose_best_search_result(results, artist='', title='', barcode=''):
+    if not results:
+        return None
+    ranked=dedupe_and_rank_results(results,artist,title) if 'dedupe_and_rank_results' in globals() else results
+    source_bonus={'Discogs':20,'Discogs Broad':18,'House Of Wax':25,'MusicBrainz':12,'MusicBrainz Broad':10,'Apple/iTunes':8}
+    best=None
+    best_score=-1
+    for r in ranked:
+        score=int(r.get('_match_score') or 0)
+        src=safe(r.get('source'))
+        score+=source_bonus.get(src,0)
+        if safe(r.get('image_url')): score+=3
+        if safe(r.get('format')) and 'digital' not in safe(r.get('format')).lower(): score+=4
+        if safe(r.get('release_year')): score+=2
+        if barcode and src in ['House Of Wax','Discogs','Discogs Broad','MusicBrainz','MusicBrainz Broad']:
+            score+=3
+        if score>best_score:
+            best_score=score
+            best=dict(r)
+            best['_final_score']=score
+    return best
+
+def run_smart_best_match_search(artist='', title='', barcode=''):
+    diagnostics=[]
+    code=normalize_barcode(barcode)
+    all_results=[]
+
+    if code:
+        barcode_results,barcode_diag=lookup_barcode_with_diagnostics(code)
+        diagnostics.extend(barcode_diag)
+        all_results.extend(barcode_results)
+
+    if artist or title:
+        text_results,text_diag=lookup_by_artist_title_with_diagnostics(artist,title,code)
+        diagnostics.extend(text_diag)
+        all_results.extend(text_results)
+
+    if code and not all_results:
+        broad_results,broad_diag=lookup_by_artist_title_with_diagnostics('', '', code)
+        diagnostics.extend(broad_diag)
+        all_results.extend(broad_results)
+
+    ranked=dedupe_and_rank_results(all_results,artist,title) if all_results else []
+    best=choose_best_search_result(ranked,artist,title,code)
+
+    if best:
+        diagnostics.append({'Step':'Smart best-match picker','Status':'Best match selected','Details':f"{safe(best.get('source'))}: {safe(best.get('artist'))} - {safe(best.get('title'))}"})
+    else:
+        diagnostics.append({'Step':'Smart best-match picker','Status':'No best match','Details':'No automatic source returned a usable candidate. Use manual seed to build House Of Wax database.'})
+    return best,ranked,diagnostics
+
+def render_best_match_card(best, key_prefix='main'):
+    if not best:
+        return
+    st.markdown('### Recommended best match')
+    with st.container(border=True):
+        c1,c2=st.columns([1,2])
+        with c1:
+            if safe(best.get('image_url')):
+                st.image(safe(best.get('image_url')),use_container_width=True)
+            else:
+                st.info('No image returned.')
+        with c2:
+            st.write(f"**Artist:** {safe(best.get('artist'))}")
+            st.write(f"**Title:** {safe(best.get('title'))}")
+            st.write(f"**Source:** {safe(best.get('source'))}")
+            st.write(f"**Format:** {safe(best.get('format'))}")
+            st.write(f"**Label:** {safe(best.get('label'))}")
+            st.write(f"**Year:** {safe(best.get('release_year'))}")
+            if safe(best.get('external_url')):
+                st.write(f"**Source URL:** {safe(best.get('external_url'))}")
+            st.caption(f"Match score: {safe(best.get('_final_score')) or safe(best.get('_match_score'))}")
+            if st.button('Use recommended match',key=f'use_recommended_match_{key_prefix}'):
+                st.session_state['v24_autofill_listing']=best
+                st.session_state['v24_autofill_barcode']=st.session_state.get(f'v24_lookup_barcode_clean_{key_prefix}','')
+                try:
+                    rid=create_or_update_how_release(st.session_state['v24_autofill_barcode'],best)
+                    st.session_state['v25_release_id']=rid
+                except Exception:
+                    pass
+                st.success('Recommended match loaded into listing draft.')
+
+
 def show_universal_search_links(artist='', title='', barcode=''):
     links=universal_search_urls(artist,title,barcode)
     if not links:
         return
-    st.markdown('### One-button universal search')
-    st.caption('One click opens all source searches at once using the artist, album title, and/or barcode you entered.')
-
-    # Browser security may block multiple tabs the first time. If that happens, allow pop-ups for the Streamlit app.
-    links_js=",\n".join([f'{{label: {safe(label)!r}, url: {safe(url)!r}}}' for label,url in links])
-    components.html(f"""
-    <style>
-      .how-one-search-wrap {{
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        padding: 0.3rem 0 0.8rem 0;
-      }}
-      .how-one-search-button {{
-        width: 100%;
-        border: 1px solid rgba(226, 211, 170, 0.78);
-        background: linear-gradient(135deg, rgba(226,211,170,0.28), rgba(96,45,38,0.25));
-        color: #fff4d6;
-        border-radius: 999px;
-        padding: 0.95rem 1rem;
-        font-size: 1rem;
-        font-weight: 800;
-        letter-spacing: 0.01em;
-        cursor: pointer;
-      }}
-      .how-one-search-button:hover {{
-        background: linear-gradient(135deg, rgba(226,211,170,0.42), rgba(96,45,38,0.35));
-      }}
-      .how-one-search-note {{
-        margin-top: 0.55rem;
-        color: rgba(255,255,255,0.72);
-        font-size: 0.86rem;
-        line-height: 1.35;
-      }}
-      .how-opened-list {{
-        margin-top: 0.65rem;
-        color: rgba(255,255,255,0.82);
-        font-size: 0.86rem;
-      }}
-      .how-opened-list a {{
-        color: #f8efd4;
-      }}
-    </style>
-    <div class="how-one-search-wrap">
-      <button class="how-one-search-button" onclick="openAllHouseOfWaxSearches()">🔎 Search All Sources At Once</button>
-      <div class="how-one-search-note">
-        This opens Discogs, MusicBrainz, Apple/iTunes, Google, Wikipedia/Wikidata, barcode databases, and GS1 searches in new tabs.
-        If only one tab opens, allow pop-ups for this app and click again.
-      </div>
-      <div id="how-opened-list" class="how-opened-list"></div>
-    </div>
-    <script>
-      const howLinks = [{links_js}];
-      function openAllHouseOfWaxSearches() {{
-        let opened = 0;
-        let html = "<strong>Opened searches:</strong><br>";
-        howLinks.forEach((item, index) => {{
-          setTimeout(() => {{
-            const win = window.open(item.url, "_blank", "noopener,noreferrer");
-            if (win) opened += 1;
-          }}, index * 120);
-          html += "• <a href='" + item.url + "' target='_blank' rel='noopener noreferrer'>" + item.label + "</a><br>";
-        }});
-        document.getElementById("how-opened-list").innerHTML = html + "<br><em>If your browser blocked tabs, use the links above or allow pop-ups.</em>";
-      }}
-    </script>
-    """,height=180)
-
-    with st.expander('Backup: individual source links and copyable URLs'):
-        st.write('Use this if your browser blocks the one-button search.')
+    with st.expander('Backup source links — only if smart search fails'):
+        st.write('Smart Search searches inside House Of Wax first. These links are only a backup for manual verification.')
         for label,url in links:
             st.markdown(f"- [{safe(label)}]({safe(url)})")
         st.markdown('#### Copy exact URLs')
@@ -1988,9 +2006,31 @@ def render_barcode_lookup_widget(key_prefix='main'):
         if matches:
             st.session_state[f'v24_barcode_matches_{key_prefix}']=matches
             st.session_state[f'v24_lookup_barcode_clean_{key_prefix}']=normalize_barcode(barcode)
-            st.success(f'Found {len(matches)} possible match(es). Choose one below to auto-fill the listing draft.')
+            best=choose_best_search_result(matches,search_artist,search_title,barcode)
+            st.session_state[f'v25_best_match_{key_prefix}']=best
+            st.success(f'Found {len(matches)} possible match(es). A recommended best match was selected below.')
         else:
             st.warning('No artist/title match found. Review diagnostics below, then manually enter the product if needed.')
+
+    st.markdown('### Smart best-match search')
+    st.caption('This searches all connected sources inside the app, ranks the candidates, and presents one recommended match.')
+    if st.button('Smart Search: Find Best Match',key=f'v25_smart_search_button_{key_prefix}'):
+        with st.spinner('Searching all connected sources and choosing the best match...'):
+            best,ranked,diagnostics=run_smart_best_match_search(
+                st.session_state.get(f'v25_search_artist_{key_prefix}',''),
+                st.session_state.get(f'v25_search_title_{key_prefix}',''),
+                barcode
+            )
+        st.session_state[f'v25_lookup_diagnostics_{key_prefix}']=diagnostics
+        st.session_state[f'v25_best_match_{key_prefix}']=best
+        st.session_state[f'v24_barcode_matches_{key_prefix}']=ranked
+        st.session_state[f'v24_lookup_barcode_clean_{key_prefix}']=normalize_barcode(barcode)
+        if best:
+            st.success('Smart search selected a recommended best match.')
+        else:
+            st.warning('Smart search could not find a strong match. Use manual seed or backup links.')
+
+    render_best_match_card(st.session_state.get(f'v25_best_match_{key_prefix}'),key_prefix)
 
     show_barcode_diagnostics(st.session_state.get(f'v25_lookup_diagnostics_{key_prefix}',[]))
     current_artist=st.session_state.get(f'v25_search_artist_{key_prefix}','')
@@ -2491,6 +2531,17 @@ def barcode_diagnostics_page():
         matches,diagnostics=lookup_by_artist_title_with_diagnostics(artist,title,code)
         st.session_state['standalone_diag_matches']=matches
         st.session_state['standalone_diag_results']=diagnostics
+    if st.button('Smart Search: Find Best Match',key='standalone_smart_best_match'):
+        best,ranked,diagnostics=run_smart_best_match_search(
+            st.session_state.get('standalone_diag_artist',''),
+            st.session_state.get('standalone_diag_title',''),
+            code
+        )
+        st.session_state['standalone_diag_matches']=ranked
+        st.session_state['standalone_diag_results']=diagnostics
+        st.session_state['standalone_best_match']=best
+    render_best_match_card(st.session_state.get('standalone_best_match'),'standalone_diag')
+
     show_barcode_diagnostics(st.session_state.get('standalone_diag_results',[]))
     show_universal_search_links(st.session_state.get('standalone_diag_artist',''),st.session_state.get('standalone_diag_title',''),code)
     manual_release_seed_form(st.session_state.get('standalone_diag_artist',''),st.session_state.get('standalone_diag_title',''),code,'standalone_diag')
